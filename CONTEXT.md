@@ -21,6 +21,18 @@ game's own. Boreas plays Events; it never decides them.
 **Turn**:
 The world's clock. An Intent that costs a Turn advances it; there is no other time.
 
+**Exploring**:
+The Mode where every waiting Intent's Events play together, a held direction
+repeats, and a click Travels.
+
+**Encounter**:
+The Mode where each Unit's Intent plays in its own beat and every Step is one
+press or one click.
+
+**Travel**:
+Walking to a chosen cell one Step at a time by the shortest route, chosen again
+before every Step.
+
 **Gate**:
 Terrain that opens for some Units: a list of routes.
 
