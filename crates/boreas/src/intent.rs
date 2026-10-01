@@ -6,9 +6,10 @@ use std::marker::PhantomData;
 
 use aeolus::{Cell, Dir, Intent, next_step};
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
 
+use crate::cursor::{Cursor, CursorPlugin};
 use crate::inspect::InspectApp;
+use crate::owner::{self, InputBase, InputOwner, Owner};
 use crate::pace::{Act, Cadence, Game, Lock, PacePlugin, Play, Sim, TurnSet};
 
 /// Set by the game. Entering an Encounter stops any Travel.
@@ -103,6 +104,15 @@ impl Run {
         self.key = key;
     }
 
+    /// Mutes every step key now held, so a handback starts still.
+    fn mute_held(&mut self, steps: &[(KeyCode, Dir)], keys: &ButtonInput<KeyCode>) {
+        for &(k, _) in steps {
+            if keys.pressed(k) && !self.muted.contains(&k) {
+                self.muted.push(k);
+            }
+        }
+    }
+
     /// A bump mutes the key behind the last Step until it is released.
     fn end(&mut self) {
         if let Some(k) = self.key.filter(|k| !self.muted.contains(k)) {
@@ -142,10 +152,15 @@ fn read_input<G: Game>(
     (keys, time): (Res<ButtonInput<KeyCode>>, Res<Time>),
     mut clicks: MessageReader<TravelTo>,
     (mut travel, mut run): (ResMut<Travel>, ResMut<Run>),
-    sim: Res<Sim<G>>,
+    (sim, owner): (Res<Sim<G>>, InputOwner),
     mut acts: MessageWriter<Act<G::Intent>>,
 ) {
     let click = clicks.read().last().map(|c| c.0);
+    if owner.get() != Owner::Gameplay {
+        travel.0 = None;
+        run.mute_held(&bindings.steps, &keys);
+        return;
+    }
     match *mode {
         Mode::Encounter => travel.0 = None,
         Mode::Exploring if click.is_some() => travel.0 = click,
@@ -202,7 +217,7 @@ fn end_run<G: Game>(
 fn click_cell(
     mouse: Res<ButtonInput<MouseButton>>,
     bindings: Res<Bindings>,
-    windows: Query<&Window, With<PrimaryWindow>>,
+    cursor: Res<Cursor>,
     camera: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     ui: Query<&Interaction, With<Button>>,
     mut out: MessageWriter<TravelTo>,
@@ -210,10 +225,7 @@ fn click_cell(
     if !mouse.just_pressed(bindings.travel) || ui.iter().any(|i| *i == Interaction::Pressed) {
         return;
     }
-    let (Ok(window), Ok((cam, at))) = (windows.single(), camera.single()) else {
-        return;
-    };
-    let Some(cursor) = window.cursor_position() else {
+    let (Some(cursor), Ok((cam, at))) = (cursor.0, camera.single()) else {
         return;
     };
     if let Ok(p) = cam.viewport_to_world_2d(at, cursor) {
@@ -232,7 +244,8 @@ fn dump(w: &World) -> String {
     let travel = travel.map_or("none".into(), |c| format!("({},{})", c.x, c.y));
     let ended = w.get_resource::<Run>().is_some_and(|r| !r.muted.is_empty());
     let run = if ended { "ended" } else { "live" };
-    format!("mode={mode:?} travel={travel} run={run}")
+    let owner = owner::of(w).token();
+    format!("owner={owner} mode={mode:?} travel={travel} run={run}")
 }
 
 /// Input for `G`'s player Unit; adds `PacePlugin<G>` if it is not in yet.
@@ -249,7 +262,11 @@ impl<G: Game> Plugin for IntentPlugin<G> {
         if !app.is_plugin_added::<PacePlugin<G>>() {
             app.add_plugins(PacePlugin::<G>::default());
         }
+        if !app.is_plugin_added::<CursorPlugin>() {
+            app.add_plugins(CursorPlugin);
+        }
         app.init_resource::<Bindings>()
+            .init_resource::<InputBase>()
             .init_resource::<Travel>()
             .init_resource::<Run>()
             .init_resource::<Time>()
@@ -583,14 +600,16 @@ mod tests {
         app.update();
         let got = crate::inspect::snapshot(app.world());
         let line = |name| got.iter().find(|(n, _)| *n == name).unwrap().1.clone();
-        assert_eq!(line("intent"), "mode=Exploring travel=(0,3) run=live");
+        let want = "owner=gameplay mode=Exploring travel=(0,3) run=live";
+        assert_eq!(line("intent"), want);
         assert_eq!(line("pace"), "waiting=0 locked=false cadence=150");
         assert_eq!(line("sim"), "turn=1 player=(0,1)");
         app.insert_resource(Mode::Encounter);
         app.update();
         let got = crate::inspect::snapshot(app.world());
         let intent = got.iter().find(|(n, _)| *n == "intent").unwrap();
-        assert_eq!(intent.1, "mode=Encounter travel=none run=live");
+        let want = "owner=gameplay mode=Encounter travel=none run=live";
+        assert_eq!(intent.1, want);
     }
 
     #[test]

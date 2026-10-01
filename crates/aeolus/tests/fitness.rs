@@ -186,3 +186,61 @@ fn a_game_word_counts_unless_it_continues_another_word() {
     assert!(!names("indoor", "door"));
     assert!(!names("div_floor", "floor"));
 }
+
+/// Boreas files whose plugin declares no dump yet. Shrink-only; empty on purpose.
+const UNDUMPED: [&str; 0] = [];
+
+/// A plugin impl with no `.inspect(` dump, both read above the file's tests.
+fn undumped_plugin(text: &str) -> Option<bool> {
+    let shipped = text.split("#[cfg(test)]").next().unwrap_or_default();
+    let plugin = shipped
+        .lines()
+        .map(str::trim)
+        .any(|l| l.starts_with("impl") && l.contains(" Plugin for "));
+    plugin.then(|| !shipped.contains(".inspect("))
+}
+
+#[test]
+fn every_boreas_plugin_declares_a_dump() {
+    let src = root().join("crates/boreas/src");
+    let (mut plugins, mut hits) = (0, Vec::new());
+    for path in files(&src) {
+        let rel = path
+            .strip_prefix(&src)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        match undumped_plugin(&fs::read_to_string(&path).unwrap()) {
+            Some(true) => hits.push(rel),
+            Some(false) => plugins += 1,
+            None => {}
+        }
+    }
+    assert!(plugins + hits.len() >= 4, "boreas plugins not found");
+    let new: Vec<_> = hits
+        .iter()
+        .filter(|h| !UNDUMPED.contains(&h.as_str()))
+        .collect();
+    assert!(new.is_empty(), "plugins without a dump: {new:?}");
+    let fixed: Vec<_> = UNDUMPED
+        .iter()
+        .filter(|u| !hits.iter().any(|h| h == *u))
+        .collect();
+    assert!(
+        fixed.is_empty(),
+        "dumped now, drop from UNDUMPED: {fixed:?}"
+    );
+}
+
+#[test]
+fn a_dump_counts_only_above_the_tests() {
+    let generic = "impl<G: Game> Plugin for P<G> {}\n";
+    assert_eq!(undumped_plugin(generic), Some(true));
+    assert_eq!(
+        undumped_plugin(&format!("{generic}app.inspect(\"p\", d);")),
+        Some(false)
+    );
+    let test_only = format!("{generic}#[cfg(test)]\nmod t {{ app.inspect(\"p\", d); }}");
+    assert_eq!(undumped_plugin(&test_only), Some(true));
+    assert_eq!(undumped_plugin("#[cfg(test)]\nimpl Plugin for T {}"), None);
+}

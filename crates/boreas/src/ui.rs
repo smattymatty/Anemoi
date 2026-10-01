@@ -1,7 +1,11 @@
 //! Reusable menu primitives: theme, focus, keyboard navigation, and pointer activation.
+use crate::inspect::InspectApp;
+use crate::owner::TakesInput;
 use crate::palette;
 use aeolus::palette::Palette;
 use bevy::audio::Volume;
+use bevy::ecs::change_detection::Tick;
+use bevy::ecs::system::SystemChangeTick;
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 
@@ -224,12 +228,13 @@ pub fn corner_button(label: impl Into<String>, theme: &UiTheme) -> impl Bundle {
 }
 
 /// Sends the same activation message for a click or Enter/Space on the focused button.
-/// A click always activates. Hover selects only while the pointer leads, and
+/// Keys move only the [`newest_marked`] menu. A click always activates. Hover selects only while the pointer leads, and
 /// then every frame, so a moving mouse takes focus back from the keys at once.
 pub fn navigate_and_activate(
     keys: Res<ButtonInput<KeyCode>>,
     lead: Res<UiLead>,
-    mut menus: Query<(Entity, &mut MenuSelection)>,
+    ticks: SystemChangeTick,
+    mut menus: Query<(Entity, &mut MenuSelection, Option<Ref<TakesInput>>)>,
     buttons: Query<(Entity, Ref<Interaction>, &Focusable, Option<&ChildOf>), With<StyledButton>>,
     mut activated: MessageWriter<UiActivated>,
     mut focused: MessageWriter<UiFocused>,
@@ -243,7 +248,7 @@ pub fn navigate_and_activate(
         }
         let menu = parent.and_then(|p| menus.get_mut(p.parent()).ok());
         match menu {
-            Some((_, mut menu)) if menu.selected != focusable.0 => {
+            Some((_, mut menu, _)) if menu.selected != focusable.0 => {
                 menu.selected = focusable.0;
                 focused.write(UiFocused { entity });
             }
@@ -253,10 +258,11 @@ pub fn navigate_and_activate(
             _ => {}
         }
     }
-    for (menu_entity, mut menu) in &mut menus {
-        if menu.count == 0 {
-            continue;
-        }
+    let marks = menus.iter().filter_map(|(e, _, m)| Some((m?.added(), e)));
+    let newest = newest_marked(marks, ticks.this_run());
+    if let Some((menu_entity, mut menu, _)) = newest.and_then(|e| menus.get_mut(e).ok())
+        && menu.count > 0
+    {
         let before = menu.selected;
         if keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyW) {
             menu.selected = (menu.selected + menu.count - 1) % menu.count;
@@ -364,15 +370,44 @@ impl Plugin for UiPlugin {
                     play_feedback,
                 )
                     .chain(),
-            );
+            )
+            .inspect("ui", dump);
     }
+}
+
+/// The one marked menu that takes the keys and the dump shows: the most recently
+/// marked; a tie (marked the same tick) goes to the higher entity index.
+fn newest_marked(marks: impl Iterator<Item = (Tick, Entity)>, now: Tick) -> Option<Entity> {
+    let newer = |a: &(Tick, Entity), b: &(Tick, Entity)| {
+        b.0.is_newer_than(a.0, now) || (b.0 == a.0 && b.1.index() > a.1.index())
+    };
+    marks
+        .reduce(|a, b| if newer(&a, &b) { b } else { a })
+        .map(|(_, e)| e)
+}
+
+fn shown(w: &World) -> Option<(usize, usize)> {
+    let mut q = w.try_query::<(Entity, Ref<TakesInput>, &MenuSelection)>()?;
+    let rows = q.iter(w).map(|(e, mark, _)| (mark.added(), e));
+    let menu = w.get::<MenuSelection>(newest_marked(rows, w.read_change_tick())?)?;
+    Some((menu.selected, menu.count))
+}
+
+fn dump(w: &World) -> String {
+    let marked = crate::inspect::count::<With<TakesInput>>(w);
+    let menu = shown(w).map_or("focus=none".into(), |(f, c)| format!("focus={f} count={c}"));
+    let lead = w.get_resource::<UiLead>().copied().unwrap_or_default();
+    let (focus, activate) = w
+        .get_resource::<UiFeedbackStats>()
+        .map_or((0, 0), |s| (s.focus, s.activate));
+    format!("marked={marked} {menu} lead={lead:?} focus_sounds={focus} activate_sounds={activate}")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A two-button menu; the returned buttons are focus 0 and 1.
+    /// A two-button menu that takes input; the returned buttons are focus 0 and 1.
     fn menu() -> (App, Entity, [Entity; 2]) {
         let mut app = App::new();
         app.insert_resource(ButtonInput::<KeyCode>::default())
@@ -385,10 +420,13 @@ mod tests {
             .add_plugins(UiPlugin);
         let panel = app
             .world_mut()
-            .spawn(MenuSelection {
-                selected: 0,
-                count: 2,
-            })
+            .spawn((
+                MenuSelection {
+                    selected: 0,
+                    count: 2,
+                },
+                TakesInput,
+            ))
             .id();
         let button = |app: &mut App, i| {
             let id = app
@@ -427,6 +465,11 @@ mod tests {
 
     fn selected(app: &App, panel: Entity) -> usize {
         app.world().get::<MenuSelection>(panel).unwrap().selected
+    }
+
+    fn ui_line(app: &App) -> String {
+        let got = crate::inspect::snapshot(app.world());
+        got.into_iter().find(|(n, _)| *n == "ui").unwrap().1
     }
 
     fn fill(app: &App, button: Entity) -> Color {
@@ -534,5 +577,93 @@ mod tests {
         let stats = app.world().resource::<UiFeedbackStats>();
         assert_eq!((stats.focus, stats.activate), (1, 1));
         assert_eq!(fill(&app, button), UiTheme::default().pressed);
+    }
+
+    /// An unmarked menu (an always-visible button) ignores keys, keeps the pointer.
+    #[test]
+    fn an_unmarked_menu_answers_only_the_pointer() {
+        let (mut app, panel, [_, button]) = menu();
+        app.world_mut().entity_mut(panel).remove::<TakesInput>();
+        app.update();
+        tap(&mut app, KeyCode::KeyS);
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(selected(&app, panel), 0, "keys move nothing");
+        let stats = app.world().resource::<UiFeedbackStats>();
+        assert_eq!((stats.focus, stats.activate), (0, 0), "nor activate");
+        app.world_mut()
+            .entity_mut(button)
+            .insert(Interaction::Hovered);
+        nudge_mouse(&mut app);
+        assert_eq!(selected(&app, panel), 1, "hover selects");
+        app.world_mut()
+            .entity_mut(button)
+            .insert(Interaction::Pressed);
+        app.update();
+        let stats = app.world().resource::<UiFeedbackStats>();
+        assert_eq!((stats.focus, stats.activate), (1, 1), "a click activates");
+    }
+
+    #[test]
+    fn the_ui_dump_shows_the_marked_menu_lead_and_feedback() {
+        let (mut app, _, _) = menu();
+        tap(&mut app, KeyCode::KeyS);
+        let want = "marked=1 focus=1 count=2 lead=Keys focus_sounds=1 activate_sounds=0";
+        assert_eq!(ui_line(&app), want);
+        nudge_mouse(&mut app);
+        assert!(ui_line(&app).contains(" lead=Pointer "));
+    }
+
+    /// Two marked menus: keys drive only the one the dump shows, the newer.
+    #[test]
+    fn keys_drive_only_the_newest_marked_menu() {
+        let (mut app, older, _) = menu();
+        let newer = app
+            .world_mut()
+            .spawn((
+                MenuSelection {
+                    selected: 0,
+                    count: 2,
+                },
+                TakesInput,
+            ))
+            .id();
+        for i in 0..2 {
+            let row = (StyledButton, Focusable(i), Interaction::None);
+            let id = app.world_mut().spawn(row).id();
+            app.world_mut().entity_mut(newer).add_child(id);
+        }
+        app.update();
+        tap(&mut app, KeyCode::KeyW);
+        assert_eq!((selected(&app, older), selected(&app, newer)), (0, 1));
+        tap(&mut app, KeyCode::Enter);
+        let stats = app.world().resource::<UiFeedbackStats>();
+        assert_eq!((stats.focus, stats.activate), (1, 1), "one menu's feedback");
+        assert!(ui_line(&app).starts_with("marked=2 focus=1 count=2 "));
+    }
+
+    /// Several marked menus: the dump shows the one marked last, a tie the higher index.
+    #[test]
+    fn the_ui_dump_shows_the_most_recently_marked_menu() {
+        let (mut app, panel, _) = menu();
+        app.world_mut().entity_mut(panel).remove::<TakesInput>();
+        app.update();
+        assert!(ui_line(&app).starts_with("marked=0 focus=none lead="));
+        let menu = MenuSelection {
+            selected: 2,
+            count: 3,
+        };
+        app.world_mut().spawn((menu, TakesInput));
+        app.update();
+        assert!(ui_line(&app).starts_with("marked=1 focus=2 count=3 "));
+        app.world_mut().entity_mut(panel).insert(TakesInput);
+        app.update();
+        assert!(ui_line(&app).starts_with("marked=2 focus=0 count=2 "));
+        let tie = |count| (MenuSelection { selected: 0, count }, TakesInput);
+        app.world_mut().spawn(tie(4));
+        app.world_mut().spawn(tie(5));
+        assert!(
+            ui_line(&app).contains(" count=5 "),
+            "a tie: the higher index"
+        );
     }
 }
