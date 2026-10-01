@@ -8,15 +8,15 @@ press = ["W"]
 [[at]]
 frame = 7
 release = ["W"]
-expect = { walker = "(0,2) turn=2" }
+expect = { sim = "player=(0,2) turn=2" }
 
 [[at]]
 frame = 20
 click_tile = [2, 3]
 note = "the first Step goes this frame"
-expect = { walker = "(0,3)", intent = "travel=(2,3)" }
+expect = { sim = "player=(0,3)", intent = "travel=(2,3)" }
 
 [[at]]
 frame = 30
 shot = true
-expect = { walker = "(2,3) turn=5", intent = "travel=none", pace = "locked=false" }
+expect = { sim = "player=(2,3) turn=5", intent = "travel=none", pace = "locked=false" }

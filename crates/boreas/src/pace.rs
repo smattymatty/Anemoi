@@ -1,9 +1,10 @@
 //! Turns Intents into presented Events, and owns the input lock. Exploring plays
-//! every waiting Intent's Events at once; an Encounter plays one Unit's Intent per
-//! beat, after the last beat's presentation ends. Presenters are game observers.
+//! every waiting Intent's Events at once and waits only on `Busy`; an Encounter
+//! plays one Unit's Intent per beat, after the last beat's Tweens end too.
 
 use std::collections::VecDeque;
 use std::marker::PhantomData;
+use std::time::Duration;
 
 use aeolus::{Intent, Rules, UnitId, World};
 use bevy::prelude::*;
@@ -75,7 +76,8 @@ pub struct Play<E: Send + Sync + 'static> {
     pub event: aeolus::Event<E>,
 }
 
-/// A presentation still running. The lock holds while any exists, or any `Tween`.
+/// A presentation still running. The lock holds while any exists; in an
+/// Encounter, while any `Tween` does too.
 #[derive(Component)]
 pub struct Busy;
 
@@ -93,6 +95,11 @@ impl<E> Default for Pending<E> {
 #[derive(Resource, Default, Debug, PartialEq, Eq)]
 pub struct Lock(pub bool);
 
+/// Set by the game: the least time between repeated Steps of a held key or a
+/// Travel. Zero, the default, repeats every unlocked frame.
+#[derive(Resource, Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct Cadence(pub Duration);
+
 /// Runs in order each frame: the lock, then input, then play.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TurnSet {
@@ -100,8 +107,6 @@ pub enum TurnSet {
     Input,
     Play,
 }
-
-type Playing = Or<(With<Busy>, With<Tween>)>;
 
 /// How many waiting beats to play now.
 pub fn beats(mode: Mode, waiting: usize) -> usize {
@@ -111,12 +116,20 @@ pub fn beats(mode: Mode, waiting: usize) -> usize {
     }
 }
 
+/// Whether a presentation holds the turn. Exploring never waits on a Tween.
+fn playing(mode: Mode, busy: &Query<(), With<Busy>>, tweens: &Query<(), With<Tween>>) -> bool {
+    !busy.is_empty() || (mode == Mode::Encounter && !tweens.is_empty())
+}
+
 fn lock<G: Game>(
     pending: Res<Pending<G::Event>>,
-    busy: Query<(), Playing>,
+    mode: Res<Mode>,
+    busy: Query<(), With<Busy>>,
+    tweens: Query<(), With<Tween>>,
     mut lock: ResMut<Lock>,
 ) {
-    lock.set_if_neq(Lock(!pending.0.is_empty() || !busy.is_empty()));
+    let held = !pending.0.is_empty() || playing(*mode, &busy, &tweens);
+    lock.set_if_neq(Lock(held));
 }
 
 fn play<G: Game>(
@@ -125,13 +138,14 @@ fn play<G: Game>(
     mut acts: ResMut<Messages<Act<G::Intent>>>,
     mut pending: ResMut<Pending<G::Event>>,
     mode: Res<Mode>,
-    busy: Query<(), Playing>,
+    busy: Query<(), With<Busy>>,
+    tweens: Query<(), With<Tween>>,
 ) {
     for act in acts.drain() {
         let events = sim.world.apply(act.by, act.intent);
         pending.0.push_back((act.by, events));
     }
-    if !busy.is_empty() {
+    if playing(*mode, &busy, &tweens) {
         return;
     }
     let now = beats(*mode, pending.0.len());
@@ -147,7 +161,21 @@ fn dump<G: Game>(w: &bevy::prelude::World) -> String {
         .get_resource::<Pending<G::Event>>()
         .map_or(0, |p| p.0.len());
     let locked = w.get_resource::<Lock>().is_some_and(|l| l.0);
-    format!("waiting={waiting} locked={locked}")
+    let cadence = w.get_resource::<Cadence>().copied().unwrap_or_default();
+    format!(
+        "waiting={waiting} locked={locked} cadence={}",
+        cadence.0.as_millis()
+    )
+}
+
+/// The turn and the player's cell; `turn=0 player=none` before a `Sim` exists.
+fn dump_sim<G: Game>(w: &bevy::prelude::World) -> String {
+    let Some(sim) = w.get_resource::<Sim<G>>() else {
+        return "turn=0 player=none".into();
+    };
+    let at = sim.world().unit(sim.player());
+    let player = at.map_or("none".into(), |u| format!("({},{})", u.cell.x, u.cell.y));
+    format!("turn={} player={player}", sim.world().turn())
 }
 
 /// Plays `G`'s Events. Needs a `Sim<G>` resource before the first Intent.
@@ -163,6 +191,7 @@ impl<G: Game> Plugin for PacePlugin<G> {
     fn build(&self, app: &mut App) {
         app.init_resource::<Mode>()
             .init_resource::<Lock>()
+            .init_resource::<Cadence>()
             .init_resource::<Pending<G::Event>>()
             .add_message::<Act<G::Intent>>()
             .configure_sets(
@@ -176,7 +205,8 @@ impl<G: Game> Plugin for PacePlugin<G> {
                     .in_set(TurnSet::Play)
                     .run_if(resource_exists::<Sim<G>>),
             )
-            .inspect("pace", dump::<G>);
+            .inspect("pace", dump::<G>)
+            .inspect("sim", dump_sim::<G>);
     }
 }
 
@@ -317,12 +347,47 @@ pub(crate) mod tests {
         assert_eq!(*app.world().resource::<Lock>(), Lock(true));
     }
 
-    #[test]
-    fn a_running_tween_holds_the_lock() {
-        let mut app = app();
+    fn tween(app: &mut App) {
         let tween = Tween::new(Vec2::ZERO, Vec2::X, 1.0, EaseFunction::Linear);
         app.world_mut().spawn(tween);
+    }
+
+    #[test]
+    fn a_running_tween_holds_an_encounter() {
+        let mut app = app();
+        app.insert_resource(Mode::Encounter);
+        tween(&mut app);
+        act(&mut app, 0);
         app.update();
+        assert_eq!(seen(&app), [], "play waits");
         assert_eq!(*app.world().resource::<Lock>(), Lock(true));
+    }
+
+    /// The plugin can precede the `Sim`, or its player: the dump says so, never panics.
+    #[test]
+    fn the_sim_dump_reads_none_without_a_player() {
+        let mut app = App::new();
+        app.add_plugins(PacePlugin::<Walls>::default());
+        let line = |app: &App| {
+            let got = crate::inspect::snapshot(app.world());
+            got.into_iter().find(|(n, _)| *n == "sim").unwrap().1
+        };
+        assert_eq!(line(&app), "turn=0 player=none");
+        let world = World::new(Walls, Grid::new(1, 1, false), 1);
+        app.insert_resource(Sim::new(world, UnitId(3)));
+        assert_eq!(line(&app), "turn=0 player=none", "an unspawned player");
+    }
+
+    /// A Run chains into one glide: two Steps land while the first still slides.
+    #[test]
+    fn exploring_does_not_wait_on_a_tween() {
+        let mut app = app();
+        tween(&mut app);
+        act(&mut app, 0);
+        app.update();
+        act(&mut app, 0);
+        app.update();
+        assert_eq!(seen(&app), [UnitId(0), UnitId(0)]);
+        assert_eq!(*app.world().resource::<Lock>(), Lock(false));
     }
 }

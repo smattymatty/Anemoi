@@ -9,13 +9,17 @@ Put your world in a `pace::Sim::new(world, player)` resource and add
 `intent::IntentPlugin::<MyRules>::default()` (it brings `pace::PacePlugin`).
 
 - `intent`: `Bindings` (remappable) turn keys into a `Step` for the player Unit.
-  The game sets `Mode`: while `Exploring` a held key repeats and a click Travels,
-  one Step per unlocked frame by `aeolus::next_step`; in an `Encounter` every Step
-  is one press or one click. `TravelTo(cell)` is the click as a message.
+  The game sets `Mode`: while `Exploring` a held key repeats and a click Travels
+  by `aeolus::next_step`, a Step per `pace::Cadence` (default zero: every unlocked
+  frame); the first press steps at once. A bump or refusal ends the Run: that key
+  waits for release, another key steps at once. In an `Encounter` every Step is one
+  press or one click. `TravelTo(cell)` is the click as a message.
 - `pace`: every `Act { by, intent }` (input's, or the game's own) is applied to the
   world; its Events are triggered as `Play { by, event }` for your observers to
   present. Exploring plays them all at once; an Encounter plays one Unit's Intent
-  per beat. `Lock` holds input while Events wait or any `Tween` or `Busy` runs.
+  per beat. `Lock` holds input while Events wait or any `Busy` runs; in an
+  Encounter, any `Tween` too, so a Run glides while Exploring. Its `sim` dump
+  (`turn=N player=(x,y)`) shows every game's world to the sandbox.
 - `tween`: presentation-only `Transform` tweens, with an optional second leg.
 - `inspect`: `app.inspect(name, dump)` declares a read-only state line;
   `inspect::snapshot` reads them all. `anemoi-sandbox` reads only these.

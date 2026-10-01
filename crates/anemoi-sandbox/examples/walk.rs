@@ -3,7 +3,6 @@
 
 use aeolus::{Cell, Cost, Grid, Kind, Rules, Unit, UnitId, World};
 use bevy::prelude::*;
-use boreas::inspect::InspectApp;
 use boreas::intent::IntentPlugin;
 use boreas::pace::Sim;
 
@@ -38,11 +37,6 @@ impl Plugin for Walk {
             .insert_resource(Sim::new(world, player))
             .add_systems(Startup, |mut c: Commands| {
                 c.spawn(Camera2d);
-            })
-            .inspect("walker", |w| {
-                let sim = w.resource::<Sim<Ground>>();
-                let at = sim.world().unit(sim.player()).unwrap().cell;
-                format!("({},{}) turn={}", at.x, at.y, sim.world().turn())
             });
     }
 }
