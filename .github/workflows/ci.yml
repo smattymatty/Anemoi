@@ -40,15 +40,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@46817827a5bfabe028bf34e1cce71fd40e2ff697 # 1.95
         with:
+          components: clippy
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - name: system libraries for Bevy audio and input
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
+      - name: system libraries for Bevy audio, input, windowing and software Vulkan
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev mesa-vulkan-drivers
+      - name: clippy, warnings are errors
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: native tests
         # One call, so Bevy's features unify into a single build.
         run: cargo test --locked -p boreas -p anemoi-sandbox
       - name: wasm check
         run: cargo check --locked --workspace --target wasm32-unknown-unknown
+      - name: sandbox smoke run on software Vulkan (lavapipe, no GPU)
+        # The engine's own headless player: renders, steps, asserts its expectations.
+        env:
+          RUST_LOG: error
+        run: cargo run --locked -q -p anemoi-sandbox --example walk -- crates/anemoi-sandbox/scripts/walk.toml
       - name: no 3D in the engine
         # A failed `cargo tree` fails the step; it never reads as a clean tree.
         run: |

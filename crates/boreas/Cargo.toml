@@ -14,3 +14,6 @@ authors.workspace = true
 [dependencies]
 aeolus = { path = "../aeolus" }
 bevy = { version = "0.19", default-features = false, features = ["ui", "audio"] }
+
+[lints]
+workspace = true

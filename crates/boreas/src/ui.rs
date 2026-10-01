@@ -267,19 +267,21 @@ pub fn navigate_and_activate(
         {
             menu.selected = (menu.selected + 1) % menu.count;
         }
-        if menu.selected != before {
-            if let Some((entity, _, _, _)) = buttons.iter().find(|(_, _, f, parent)| {
+        let selected = buttons
+            .iter()
+            .find(|(_, _, f, parent)| {
                 f.0 == menu.selected && parent.is_some_and(|p| p.parent() == menu_entity)
-            }) {
-                focused.write(UiFocused { entity });
-            }
+            })
+            .map(|(entity, ..)| entity);
+        if menu.selected != before
+            && let Some(entity) = selected
+        {
+            focused.write(UiFocused { entity });
         }
-        if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
-            if let Some((entity, _, _, _)) = buttons.iter().find(|(_, _, f, parent)| {
-                f.0 == menu.selected && parent.is_some_and(|p| p.parent() == menu_entity)
-            }) {
-                activated.write(UiActivated { entity });
-            }
+        if (keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space))
+            && let Some(entity) = selected
+        {
+            activated.write(UiActivated { entity });
         }
     }
 }
@@ -335,10 +337,10 @@ fn play_feedback(
     stats.activate += activated as u32;
     let settings = PlaybackSettings::DESPAWN.with_volume(Volume::Linear(sounds.volume));
     for _ in 0..focused {
-        commands.spawn((AudioPlayer(sounds.focus.clone()), settings.clone()));
+        commands.spawn((AudioPlayer(sounds.focus.clone()), settings));
     }
     for _ in 0..activated {
-        commands.spawn((AudioPlayer(sounds.activate.clone()), settings.clone()));
+        commands.spawn((AudioPlayer(sounds.activate.clone()), settings));
     }
 }
 

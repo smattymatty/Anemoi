@@ -9,3 +9,7 @@ rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/smattymatty/Anemoi"
 authors = ["Mathew Storm"]
+
+# Bevy system signatures are long by nature; every other clippy lint is an error in CI.
+[workspace.lints.clippy]
+type_complexity = "allow"

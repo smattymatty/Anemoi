@@ -17,3 +17,6 @@ boreas = { path = "../boreas" }
 bevy = { version = "0.19", default-features = false, features = ["ui", "audio"] }
 serde = { version = "1", features = ["derive"] }
 toml = "1"
+
+[lints]
+workspace = true
