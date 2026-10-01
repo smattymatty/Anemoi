@@ -1,0 +1,22 @@
+# A held key walks; a click Travels one Step per frame and stops on arrival.
+frames = 40
+
+[[at]]
+frame = 5
+press = ["W"]
+
+[[at]]
+frame = 7
+release = ["W"]
+expect = { walker = "(0,2) turn=2" }
+
+[[at]]
+frame = 20
+click_tile = [2, 3]
+note = "the first Step goes this frame"
+expect = { walker = "(0,3)", intent = "travel=(2,3)" }
+
+[[at]]
+frame = 30
+shot = true
+expect = { walker = "(2,3) turn=5", intent = "travel=none", pace = "locked=false" }

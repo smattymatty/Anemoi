@@ -1,0 +1,16 @@
+[package]
+name = "boreas"
+description = "Bevy front end for Aeolus: menus, input to Intents, and Event pacing."
+categories = ["game-development", "game-engines", "gui"]
+keywords = ["gamedev", "bevy", "turn-based", "ui"]
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+aeolus = { path = "../aeolus" }
+bevy = { version = "0.19", default-features = false, features = ["ui", "audio"] }

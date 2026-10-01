@@ -1,0 +1,17 @@
+[package]
+name = "aeolus"
+description = "Deterministic, Bevy-free simulation core for turn-based top-down games."
+categories = ["game-development", "game-engines", "simulation"]
+keywords = ["gamedev", "turn-based", "deterministic", "roguelike", "grid"]
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"

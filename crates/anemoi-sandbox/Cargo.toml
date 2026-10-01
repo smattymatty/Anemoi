@@ -1,0 +1,19 @@
+[package]
+name = "anemoi-sandbox"
+description = "Scripted, headless runner for Boreas games: frames, state dumps and expectations."
+categories = ["game-development", "development-tools::testing"]
+keywords = ["gamedev", "bevy", "testing", "headless"]
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+aeolus = { path = "../aeolus" }
+boreas = { path = "../boreas" }
+bevy = { version = "0.19", default-features = false, features = ["ui", "audio"] }
+serde = { version = "1", features = ["derive"] }
+toml = "1"

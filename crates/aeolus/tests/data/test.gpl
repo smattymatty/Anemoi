@@ -1,0 +1,13 @@
+GIMP Palette
+Name: Anemoi Test
+Columns: 4
+# Written for Anemoi's own tests; MIT OR Apache-2.0 like the rest of the repo.
+  0   0   0	Black
+255 255 255	White
+ 40 200  40	Green
+200  40  40
+ 40  40 200	Blue
+128 128 128	Grey
+
+255 255 255	White again
+ 10  20  30	Night
