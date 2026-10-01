@@ -58,7 +58,9 @@ jobs:
         # The engine's own headless player: renders, steps, asserts its expectations.
         env:
           RUST_LOG: error
-        run: cargo run --locked -q -p anemoi-sandbox --example walk -- crates/anemoi-sandbox/scripts/walk.toml
+        run: |
+          cargo run --locked -q -p anemoi-sandbox --example walk -- crates/anemoi-sandbox/scripts/walk.toml
+          cargo run --locked -q -p anemoi-sandbox --example walk -- crates/anemoi-sandbox/scripts/pointer.toml
       - name: no 3D in the engine
         # A failed `cargo tree` fails the step; it never reads as a clean tree.
         run: |

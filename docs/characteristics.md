@@ -25,7 +25,7 @@ The lower number wins a tie. Never a list an agent may draft or amend.
   check on every crate.
 - **Performance**: a frame and a Turn stay cheap as Units, routes and screens
   grow. Test: a `budget_ms` on the sandbox's walk script, so a slow frame fails
-  with its number. Not yet set (`crates/anemoi-sandbox/scripts/walk.toml`).
+  with its number.
 
 ## The named conflict (operator, 2026-10-01): determinism against performance
 

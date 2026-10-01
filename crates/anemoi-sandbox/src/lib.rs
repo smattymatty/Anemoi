@@ -34,6 +34,7 @@ use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::time::TimeUpdateStrategy;
 use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
+use boreas::cursor::{self, Cursor, CursorPlugin};
 use boreas::inspect::{self, InspectApp};
 use boreas::intent::TravelTo;
 use serde::Deserialize;
@@ -51,9 +52,15 @@ pub trait Config: 'static {
     /// Headless runs have no window: tell the game the offscreen view's size.
     fn view_size(_app: &mut App, _size: UVec2) {}
 
-    /// A scripted `click_tile`. By default, a Travel request.
+    /// A scripted `click_tile`: injected past the pointer. By default, a Travel request.
     fn click_tile(world: &mut World, at: Cell) {
         world.write_message(TravelTo(at));
+    }
+
+    /// The world point a `cursor_at` cell aims at: its centre, cells 16 px wide.
+    /// Fixed apart from the game's `Bindings`, so a wrong `cell_px` shows.
+    fn cell_center(at: Cell) -> Vec2 {
+        (Vec2::new(at.x as f32, at.y as f32) + 0.5) * 16.0
     }
 }
 
@@ -96,6 +103,13 @@ struct Beat {
     mouse_press: bool,
     #[serde(default)]
     mouse_release: bool,
+    /// The button `mouse_press` and `mouse_release` use.
+    #[serde(default)]
+    button: Button,
+    /// Puts the pointer on a cell's screen position, where it stays.
+    #[serde(default)]
+    cursor_at: Option<[i32; 2]>,
+    /// A Travel request straight to the game, skipping the pointer.
     #[serde(default)]
     click_tile: Option<[i32; 2]>,
     #[serde(default)]
@@ -106,6 +120,22 @@ struct Beat {
     /// Per dump: tokens its line must hold whole, e.g. `turn = "3"`.
     #[serde(default)]
     expect: HashMap<String, String>,
+}
+
+#[derive(Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Button {
+    #[default]
+    Left,
+    Right,
+}
+
+impl From<Button> for MouseButton {
+    fn from(b: Button) -> Self {
+        match b {
+            Button::Left => MouseButton::Left,
+            Button::Right => MouseButton::Right,
+        }
+    }
 }
 
 /// The script, indexed by frame once.
@@ -214,10 +244,19 @@ pub fn run<C: Config>() {
         .insert_resource(plan)
         .insert_resource(Out(out.clone()))
         .init_resource::<Misses>()
-        .add_systems(PreUpdate, (drive, click::<C>).chain().after(InputSystems))
+        .add_systems(
+            PreUpdate,
+            (drive, point::<C>, click::<C>)
+                .chain()
+                .after(InputSystems)
+                .after(cursor::feed),
+        )
         // Before the counter ticks, so `dump` sees the frame `drive` saw.
         .add_systems(Last, dump.before(update_frame_count))
         .inspect("fetches", dump_fetches);
+    if !app.is_plugin_added::<CursorPlugin>() {
+        app.add_plugins(CursorPlugin);
+    }
 
     let misses = if windowed {
         app.add_systems(Last, quit_after_script.after(dump));
@@ -391,10 +430,10 @@ fn drive(
             keys.release(key_code(key).unwrap_or_else(|e| fail(&e)));
         }
         if beat.mouse_press {
-            mouse.press(MouseButton::Left);
+            mouse.press(beat.button.into());
         }
         if beat.mouse_release {
-            mouse.release(MouseButton::Left);
+            mouse.release(beat.button.into());
         }
         if beat.shot {
             let file = out.0.join(format!("frame_{:04}.png", frame.0));
@@ -404,6 +443,35 @@ fn drive(
             };
             commands.spawn(shot).observe(save_to_disk(file));
         }
+    }
+}
+
+/// Aims the pointer at this frame's `cursor_at` cell through the camera, and
+/// holds it there after the window's feed, as a resting mouse would.
+fn point<C: Config>(
+    frame: Res<FrameCount>,
+    plan: Res<Plan>,
+    camera: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    mut held: Local<Option<Vec2>>,
+    mut cursor: ResMut<Cursor>,
+    mut misses: ResMut<Misses>,
+) {
+    let beats = plan.beats.get(&frame.0).into_iter().flatten();
+    for [x, y] in beats.filter_map(|b| b.cursor_at) {
+        let world = C::cell_center(Cell::new(x, y)).extend(0.0);
+        let screen = camera
+            .single()
+            .map_err(|e| e.to_string())
+            .and_then(|(cam, at)| cam.world_to_viewport(at, world).map_err(|e| e.to_string()));
+        match screen {
+            Ok(p) => *held = Some(p),
+            Err(e) => misses
+                .0
+                .push(format!("frame {}: cursor_at ({x},{y}): {e}", frame.0)),
+        }
+    }
+    if held.is_some() {
+        cursor.0 = *held;
     }
 }
 
@@ -452,11 +520,14 @@ fn report(frame: u32, beats: &[Beat], dumps: &[(&str, String)]) -> (String, Vec<
         if !keys.is_empty() {
             line += &format!(" keys=[{}]", keys.join(" "));
         }
+        if let Some([x, y]) = beat.cursor_at {
+            line += &format!(" cursor_at=({x},{y})");
+        }
         if beat.mouse_press {
-            line += " mouse=[+Left]";
+            line += &format!(" mouse=[+{:?}]", beat.button);
         }
         if beat.mouse_release {
-            line += " mouse=[-Left]";
+            line += &format!(" mouse=[-{:?}]", beat.button);
         }
         if let Some([x, y]) = beat.click_tile {
             line += &format!(" click_tile=({x},{y})");
@@ -572,6 +643,8 @@ mod tests {
         release = ["Up"]
         mouse_press = true
         mouse_release = true
+        button = "Right"
+        cursor_at = [1, -3]
         click_tile = [4, -2]
         shot = true
         note = "hi"
@@ -586,6 +659,13 @@ mod tests {
         assert_eq!((b.startup, b.max_frame), (8000.0, 300.0));
         let beat = &plan.beats[&5][0];
         assert_eq!(beat.click_tile, Some([4, -2]));
+        assert_eq!(
+            (beat.cursor_at, beat.button),
+            (Some([1, -3]), Button::Right)
+        );
+        let left = parse("frames = 1\n[[at]]\nframe = 1\nmouse_press = true").unwrap();
+        assert_eq!(left.beats[&1][0].button, Button::Left, "Left by default");
+        assert_eq!(MouseButton::from(Button::Right), MouseButton::Right);
         assert!(beat.mouse_press && beat.mouse_release && beat.shot);
         assert_eq!(beat.expect["turn"], "3");
     }
@@ -594,6 +674,7 @@ mod tests {
     fn unknown_fields_fail_at_both_levels() {
         assert!(parse("frames = 1\nspeed = 2").is_err());
         assert!(parse("frames = 1\n[[at]]\nframe = 1\nclick = [1, 1]").is_err());
+        assert!(parse("frames = 1\n[[at]]\nframe = 1\nbutton = \"Middle\"").is_err());
         assert!(parse("frames = 1\nbudget_ms = { startup = 1, max_frame = 1, mean = 1 }").is_err());
     }
 
@@ -620,7 +701,7 @@ mod tests {
             "{line}"
         );
         assert!(
-            line.contains("click_tile=(4,-2) note=\"hi\" | turn: 13"),
+            line.contains(" cursor_at=(1,-3) mouse=[+Right] mouse=[-Right] click_tile=(4,-2) note=\"hi\" | turn: 13"),
             "{line}"
         );
         assert_eq!(misses.len(), 1, "\"3\" is not a whole token of \"13\"");
