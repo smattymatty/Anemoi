@@ -1,0 +1,76 @@
+# The engine's check.sh, on every push and PR. Actions pinned by SHA.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  aeolus:
+    name: Aeolus (fmt, fitness, tests, wasm check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@46817827a5bfabe028bf34e1cce71fd40e2ff697 # 1.95
+        with:
+          components: rustfmt
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: fmt
+        run: cargo fmt --all --check
+      - name: fitness functions (determinism, Bevy-free, no game words)
+        run: cargo test --locked -p aeolus --test fitness
+      - name: native tests
+        run: |
+          cargo test --locked -p aeolus --lib --test replay
+          cargo test --locked -p aeolus --doc
+      - name: wasm check
+        run: cargo check --locked -p aeolus --target wasm32-unknown-unknown --tests
+
+  boreas:
+    name: Boreas + sandbox (tests, wasm check, no 3D)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@46817827a5bfabe028bf34e1cce71fd40e2ff697 # 1.95
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: system libraries for Bevy audio and input
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
+      - name: native tests
+        # One call, so Bevy's features unify into a single build.
+        run: cargo test --locked -p boreas -p anemoi-sandbox
+      - name: wasm check
+        run: cargo check --locked --workspace --target wasm32-unknown-unknown
+      - name: no 3D in the engine
+        # A failed `cargo tree` fails the step; it never reads as a clean tree.
+        run: |
+          tree="$(cargo tree --locked --workspace --target all --prefix none -f '{p}')"
+          for crate in bevy_pbr bevy_gltf bevy_anti_alias; do
+            if grep -q "^$crate v" <<<"$tree"; then
+              echo "::error::$crate is back in the dependency tree; keep bevy on ui+audio"
+              exit 1
+            fi
+          done
+
+  wasm-replay:
+    name: Replay on wasm32 (golden hash)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@46817827a5bfabe028bf34e1cce71fd40e2ff697 # 1.95
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: wasm-pack@0.15.0
+      - name: replay against the native GOLDEN
+        run: wasm-pack test --node crates/aeolus --locked --test replay
