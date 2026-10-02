@@ -44,10 +44,11 @@ struct Edge(usize);
 const Z: f32 = 50.0;
 
 impl Outline {
+    /// Thickness in screen pixels, so a zoomed camera never thickens it.
     fn width(self) -> f32 {
         match self {
             Outline::Hover => 1.0,
-            Outline::Target => 2.0,
+            Outline::Target => 1.0,
         }
     }
 
@@ -71,6 +72,13 @@ fn edges(px: f32, width: f32) -> [(Vec2, Vec2); 4] {
         (Vec2::new(-inset, 0.0), down),
         (Vec2::new(inset, 0.0), down),
     ]
+}
+
+/// World units per screen pixel, from where the camera puts two world points one
+/// unit apart; 1 when there is no camera to ask.
+fn world_per_pixel(a: Option<Vec2>, b: Option<Vec2>) -> f32 {
+    let span = a.zip(b).map_or(1.0, |(a, b)| (b.x - a.x).abs());
+    if span > 0.0 { 1.0 / span } else { 1.0 }
 }
 
 /// The cell under world point `p`, if the grid holds it.
@@ -126,10 +134,18 @@ fn place(
     (target, flash): (Res<Target>, Res<Flash>),
     bindings: Res<Bindings>,
     theme: Res<UiTheme>,
+    camera: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     mut outlines: Query<(&Outline, &mut Transform, &mut Visibility, &Children)>,
     mut sides: Query<(&Edge, &mut Sprite, &mut Transform), Without<Outline>>,
 ) {
     let px = bindings.cell_px;
+    let to_screen = |p: Vec3| {
+        camera
+            .single()
+            .ok()
+            .and_then(|(c, eye)| c.world_to_viewport(eye, p).ok())
+    };
+    let per_pixel = world_per_pixel(to_screen(Vec3::ZERO), to_screen(Vec3::X));
     for (outline, mut at, mut shown, children) in &mut outlines {
         let cell = match outline {
             Outline::Hover => hover.0,
@@ -144,7 +160,7 @@ fn place(
             let centre = (Vec2::new(c.x as f32, c.y as f32) + 0.5) * px;
             at.translation = centre.extend(Z);
         }
-        let geometry = edges(px, outline.width());
+        let geometry = edges(px, outline.width() * per_pixel);
         for child in children {
             if let Ok((edge, mut sprite, mut side)) = sides.get_mut(*child) {
                 let (offset, size) = geometry[edge.0];
@@ -245,6 +261,23 @@ mod tests {
     }
 
     #[test]
+    fn a_line_is_one_screen_pixel_whatever_the_zoom() {
+        let at = |x| Some(Vec2::new(x, 0.0));
+        assert_eq!(world_per_pixel(at(10.0), at(13.0)), 1.0 / 3.0, "zoom 3");
+        assert_eq!(
+            world_per_pixel(at(13.0), at(10.0)),
+            1.0 / 3.0,
+            "either way round"
+        );
+        assert_eq!(world_per_pixel(None, at(1.0)), 1.0, "no camera");
+        assert_eq!(
+            world_per_pixel(at(5.0), at(5.0)),
+            1.0,
+            "a degenerate camera"
+        );
+    }
+
+    #[test]
     fn a_point_is_hovered_only_on_the_grid() {
         let at = |x, y| on_grid(Vec2::new(x, y), 16.0, 8, 8);
         assert_eq!(at(0.0, 0.0), Some(Cell::new(0, 0)));
@@ -278,8 +311,8 @@ mod tests {
         assert_eq!(sides, want);
         let (at, _, sides) = outline(&mut app, Outline::Target);
         assert_eq!(at, Vec3::new(-8.0, 8.0, Z));
-        let side = |x| (Vec3::new(x, 0.0, 0.0), Vec2::new(2.0, 12.0), theme.target);
-        assert_eq!((sides[0], sides[3]), (side(-7.0), side(7.0)));
+        let side = |x| (Vec3::new(x, 0.0, 0.0), Vec2::new(1.0, 14.0), theme.target);
+        assert_eq!((sides[0], sides[3]), (side(-7.5), side(7.5)));
         assert_eq!(line(&app), "hover=(2,3) target=(-1,0)");
     }
 

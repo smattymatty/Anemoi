@@ -227,7 +227,7 @@ pub fn button(label: impl Into<String>, index: usize, theme: &UiTheme) -> impl B
 /// A compact row for a small menu beside a 16 px cell: `button` is 48 px tall.
 pub fn row(label: impl Into<String>, index: usize, theme: &UiTheme) -> impl Bundle {
     (
-        compact(index, theme),
+        compact(index, false),
         children![text(label, ROW_TEXT, theme.foreground)],
     )
 }
@@ -240,7 +240,7 @@ pub fn refused_row(
     theme: &UiTheme,
 ) -> impl Bundle {
     (
-        compact(index, theme),
+        compact(index, true),
         children![
             text(label, ROW_TEXT, theme.muted),
             text(reason, ROW_TEXT, theme.muted)
@@ -248,23 +248,31 @@ pub fn refused_row(
     )
 }
 
-const ROW_TEXT: f32 = 12.0;
+const ROW_TEXT: f32 = 13.0;
 
-fn compact(index: usize, theme: &UiTheme) -> impl Bundle {
+/// A compact row: bare until focused, then filled `active`, edged and lettered `accent`
+/// (a classic context menu). A refused row keeps its muted letters.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct CompactRow {
+    pub refused: bool,
+}
+
+fn compact(index: usize, refused: bool) -> impl Bundle {
     (
         Button,
         StyledButton,
+        CompactRow { refused },
         Focusable(index),
         Node {
-            height: px(18),
+            height: px(20),
             align_items: AlignItems::Center,
             column_gap: px(8),
-            padding: UiRect::axes(px(6), px(1)),
+            padding: UiRect::axes(px(8), px(1)),
             border: UiRect::all(px(1)),
             ..default()
         },
-        BackgroundColor(theme.button),
-        BorderColor::all(theme.muted),
+        BackgroundColor(Color::NONE),
+        BorderColor::all(Color::NONE),
         Visibility::default(),
     )
 }
@@ -368,7 +376,7 @@ fn style_buttons(
             &mut BackgroundColor,
             &mut BorderColor,
         ),
-        With<StyledButton>,
+        (With<StyledButton>, Without<CompactRow>),
     >,
 ) {
     for (index, interaction, parent, mut background, mut border) in &mut buttons {
@@ -390,6 +398,41 @@ fn style_buttons(
         } else {
             theme.muted
         });
+    }
+}
+
+fn style_rows(
+    theme: Res<UiTheme>,
+    lead: Res<UiLead>,
+    menus: Query<&MenuSelection>,
+    mut rows: Query<(
+        &Focusable,
+        &Interaction,
+        &CompactRow,
+        Option<&ChildOf>,
+        &Children,
+        &mut BackgroundColor,
+        &mut BorderColor,
+    )>,
+    mut letters: Query<&mut TextColor>,
+) {
+    for (index, interaction, row, parent, children, mut fill, mut edge) in &mut rows {
+        let focused = parent
+            .and_then(|p| menus.get(p.parent()).ok())
+            .is_some_and(|menu| menu.selected == index.0);
+        let lit = focused || (*lead == UiLead::Pointer && *interaction != Interaction::None);
+        *fill = BackgroundColor(if lit { theme.active } else { Color::NONE });
+        *edge = BorderColor::all(if lit { theme.accent } else { Color::NONE });
+        let ink = match (row.refused, lit) {
+            (true, _) => theme.muted,
+            (false, true) => theme.accent,
+            (false, false) => theme.foreground,
+        };
+        for child in children.iter() {
+            if let Ok(mut c) = letters.get_mut(child) {
+                c.0 = ink;
+            }
+        }
     }
 }
 
@@ -432,6 +475,7 @@ impl Plugin for UiPlugin {
                     track_lead,
                     navigate_and_activate,
                     style_buttons,
+                    style_rows,
                     play_feedback,
                 )
                     .chain(),
@@ -776,6 +820,72 @@ mod tests {
         assert!(
             ui_line(&app).contains(" count=5 "),
             "a tie: the higher index"
+        );
+    }
+
+    /// A classic context menu: rows are bare until focused; the focused one is filled,
+    /// edged and lettered in the accent; a refused row keeps muted letters.
+    #[test]
+    fn a_compact_row_lights_only_when_focused() {
+        let mut app = App::new();
+        app.insert_resource(ButtonInput::<KeyCode>::default())
+            .insert_resource(ButtonInput::<MouseButton>::default())
+            .add_plugins(UiPlugin);
+        let theme = UiTheme::default();
+        let panel = app
+            .world_mut()
+            .spawn((
+                MenuSelection {
+                    selected: 0,
+                    count: 3,
+                },
+                TakesInput,
+            ))
+            .id();
+        let rows = [
+            app.world_mut().spawn(row("Move", 0, &theme)).id(),
+            app.world_mut().spawn(row("Look", 1, &theme)).id(),
+            app.world_mut()
+                .spawn(refused_row("Open", "shut", 2, &theme))
+                .id(),
+        ];
+        for r in rows {
+            app.world_mut().entity_mut(r).insert(Interaction::None);
+            app.world_mut().entity_mut(panel).add_child(r);
+        }
+        app.update();
+        let look = |app: &App, r: Entity| {
+            let w = app.world();
+            let ink = w
+                .get::<TextColor>(w.get::<Children>(r).unwrap()[0])
+                .unwrap()
+                .0;
+            (
+                w.get::<BackgroundColor>(r).unwrap().0,
+                w.get::<BorderColor>(r).unwrap().top,
+                ink,
+            )
+        };
+        assert_eq!(
+            look(&app, rows[0]),
+            (theme.active, theme.accent, theme.accent)
+        );
+        assert_eq!(
+            look(&app, rows[1]),
+            (Color::NONE, Color::NONE, theme.foreground)
+        );
+        app.world_mut()
+            .get_mut::<MenuSelection>(panel)
+            .unwrap()
+            .selected = 2;
+        app.update();
+        assert_eq!(
+            look(&app, rows[0]),
+            (Color::NONE, Color::NONE, theme.foreground)
+        );
+        assert_eq!(
+            look(&app, rows[2]),
+            (theme.active, theme.accent, theme.muted)
         );
     }
 }

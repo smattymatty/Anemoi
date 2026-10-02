@@ -387,13 +387,14 @@ fn panel(labels: &[String], reasons: &[Option<String>], theme: &UiTheme) -> impl
         Node {
             position_type: PositionType::Absolute,
             flex_direction: FlexDirection::Column,
-            row_gap: px(2),
-            padding: UiRect::all(px(3)),
+            row_gap: px(4),
+            padding: UiRect::all(px(2)),
+            min_width: px(72),
             border: UiRect::all(px(1)),
             ..default()
         },
         BackgroundColor(theme.panel),
-        BorderColor::all(theme.accent),
+        BorderColor::all(theme.button),
         Interaction::None,
         GlobalZIndex(10),
         MenuSelection {
@@ -463,6 +464,9 @@ fn place<G: Game>(
         let (Ok(top_left), Ok(bottom_right)) = (corner(0, 1), corner(1, 0)) else {
             continue;
         };
+        // `world_to_viewport` counts from the window; UI lays out inside the viewport.
+        let origin = cam.logical_viewport_rect().map_or(Vec2::ZERO, |r| r.min);
+        let (top_left, bottom_right) = (top_left - origin, bottom_right - origin);
         let size = computed.size() * computed.inverse_scale_factor();
         let at = beside(Rect::from_corners(top_left, bottom_right), size, view);
         if (node.left, node.top) != (px(at.x), px(at.y)) {

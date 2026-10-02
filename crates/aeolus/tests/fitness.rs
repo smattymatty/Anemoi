@@ -248,3 +248,71 @@ fn a_dump_counts_only_above_the_tests() {
     assert_eq!(undumped_plugin(&test_only), Some(true));
     assert_eq!(undumped_plugin("#[cfg(test)]\nimpl Plugin for T {}"), None);
 }
+
+/// Colour constructors a Boreas widget never calls: every colour is a `UiTheme`
+/// role, so one game's look is one theme (operator, compound run 5).
+const RAW_COLOUR: [&str; 7] = [
+    "Color::srgb",
+    "Color::hsl",
+    "Color::linear",
+    "Color::oklch",
+    "Color::WHITE",
+    "Color::BLACK",
+    "Srgba::",
+];
+
+/// Raw colours in a Boreas file's shipped code. The palette adapter and the neutral
+/// default theme are where colours are made; everything else takes a role.
+fn raw_colours(rel: &str, text: &str) -> Vec<usize> {
+    if rel == "palette.rs" {
+        return Vec::new();
+    }
+    let shipped = text.split("#[cfg(test)]").next().unwrap_or_default();
+    let mut in_default = false;
+    let mut hits = Vec::new();
+    for (i, line) in shipped.lines().enumerate() {
+        if line.starts_with("impl Default for UiTheme") {
+            in_default = true;
+        } else if in_default && line == "}" {
+            in_default = false;
+        } else if !in_default && RAW_COLOUR.iter().any(|c| line.contains(c)) {
+            hits.push(i + 1);
+        }
+    }
+    hits
+}
+
+#[test]
+fn boreas_widgets_take_colours_from_the_theme() {
+    let src = root().join("crates/boreas/src");
+    let mut hits = Vec::new();
+    for path in files(&src) {
+        let rel = path
+            .strip_prefix(&src)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        for line in raw_colours(&rel, &fs::read_to_string(&path).unwrap()) {
+            hits.push(format!("{rel}:{line}"));
+        }
+    }
+    assert!(hits.is_empty(), "raw colours outside UiTheme: {hits:?}");
+}
+
+#[test]
+fn a_raw_colour_counts_only_outside_the_theme_and_the_tests() {
+    let theme = "impl Default for UiTheme {\n    a: Color::srgb_u8(1, 2, 3),\n}\n";
+    assert!(raw_colours("ui.rs", theme).is_empty(), "the default theme");
+    let widget = "fn f() {\n    Color::NONE;\n    Color::srgb(0.1, 0.2, 0.3);\n}\n";
+    assert_eq!(
+        raw_colours("ui.rs", widget),
+        [3],
+        "NONE passes, srgb does not"
+    );
+    let tested = "fn f() {}\n#[cfg(test)]\nfn t() { Color::WHITE; }\n";
+    assert!(raw_colours("ui.rs", tested).is_empty(), "tests may");
+    assert!(
+        raw_colours("palette.rs", widget).is_empty(),
+        "the adapter may"
+    );
+}
