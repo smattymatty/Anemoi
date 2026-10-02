@@ -64,6 +64,13 @@ jobs:
           cargo run --locked -q -p anemoi-sandbox --example walk -- crates/anemoi-sandbox/scripts/hover.toml
           cargo run --locked -q -p anemoi-sandbox --example walk -- crates/anemoi-sandbox/scripts/tile_menu.toml
           cargo run --locked -q -p anemoi-sandbox --example walk -- crates/anemoi-sandbox/scripts/tile_cursor.toml
+      - name: keep the frames of a failed smoke run
+        # A golden miss on lavapipe: compare these frames with scripts/golden/.
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sandbox-frames
+          path: target/sandbox/
       - name: no 3D in the engine
         # A failed `cargo tree` fails the step; it never reads as a clean tree.
         run: |

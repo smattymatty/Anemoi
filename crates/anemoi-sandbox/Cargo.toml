@@ -14,6 +14,8 @@ authors.workspace = true
 [dependencies]
 aeolus = { path = "../aeolus" }
 boreas = { path = "../boreas" }
+# Already in the tree through Bevy: decodes frames and goldens for comparison.
+image = { version = "0.25", default-features = false, features = ["png"] }
 bevy = { version = "0.19", default-features = false, features = ["ui", "audio"] }
 serde = { version = "1", features = ["derive"] }
 toml = "1"

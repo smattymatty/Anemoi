@@ -198,6 +198,7 @@ dependencies = [
  "aeolus",
  "bevy",
  "boreas",
+ "image",
  "serde",
  "toml",
 ]

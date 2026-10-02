@@ -12,6 +12,7 @@ frame = 5
 cursor_at = [2, 3]
 shot = true
 note = "the outline sits on (2,3)"
+golden = "golden/hover_outline.png"
 expect = { outline = "hover=(2,3) target=none", sim = "player=(0,0) turn=0" }
 
 [[at]]

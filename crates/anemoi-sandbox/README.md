@@ -19,7 +19,7 @@ impl anemoi_sandbox::Config for MyGame {
 fn main() { anemoi_sandbox::run::<MyGame>() }
 ```
 
-`cargo run --example sandbox -- sandbox/walk.toml [--window]` writes
+`cargo run --example sandbox -- sandbox/walk.toml [--window | --bless]` writes
 `target/sandbox/walk/`: `frame_NNNN.png`, `state.log` and `fetches.log`. Headless
 runs use a fixed 60 fps clock, so they repeat exactly. The runner reads only the
 dumps plugins declare through `boreas::inspect`.
@@ -41,15 +41,28 @@ mouse_release = false
 button = "Left"        # or "Right": the button this beat's press/release uses
 click_tile = [2, 3]    # Travel injected past the pointer, via Config::click_tile
 shot = true
+golden = "golden/walk.png"  # with shot: the approved frame, relative to the script
+region = [0, 0, 640, 360]   # optional [x, y, w, h] the golden compares
 note = "copied into state.log"
 expect = { turn = "3" }  # per dump: tokens its line must hold whole
 ```
+
+A golden beat compares its saved frame after the run: a pixel differs when any
+channel is more than 24 off, and more than 16 differing pixels is a miss naming
+the frame and the count (a 1 px outline grown to 2 px is 52). `--bless` copies
+the run's frames over its goldens, headless only, and blesses nothing if any
+`expect` missed. Goldens are blessed on a desktop GPU; CI renders on lavapipe and
+keeps `target/sandbox/` when a run fails. A lavapipe miss means re-blessing there,
+never a looser tolerance.
 
 `examples/walk.rs` is the smallest game it drives, with a wall line at x=6
 and a shut gate at (6,4) whose Condition the walker lacks:
 `cargo run -p anemoi-sandbox --example walk -- crates/anemoi-sandbox/scripts/walk.toml`;
 `scripts/pointer.toml` clicks a cell through the real pointer path;
 `scripts/hover.toml` aims at cells on and off the grid and shoots the outline;
+`scripts/golden/` holds the approved frames: the hover outline, the open Tile Menu
+with its focused row lit, the open menu with the pointer on another cell (no
+second outline: the map is locked), and a refused toast;
 `scripts/tile_menu.toml` (`1` hands clicks to the Tile Menu) opens, runs, Looks and
 closes it, and takes refused rows past the wall ("no route") and at the gate
 ("locked"): a toast, no Turn; `scripts/tile_cursor.toml` drives the tile cursor (`L`).

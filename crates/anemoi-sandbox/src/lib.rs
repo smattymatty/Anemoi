@@ -2,6 +2,7 @@
 //! `fn main() { anemoi_sandbox::run::<MyGame>() }`; `--window` watches the same script.
 //! Headless by default at a fixed 60 fps clock, so runs repeat exactly. Writes
 //! `target/sandbox/<script>/`: `frame_NNNN.png`, `state.log`, `fetches.log`.
+//! A `golden` beat checks its frame against an approved image; `--bless` approves.
 //! TODO: scripts start from the game's startup; with Turn Logs, from any recorded Turn.
 #![cfg(not(target_arch = "wasm32"))]
 
@@ -36,6 +37,7 @@ use bevy::winit::WinitPlugin;
 use boreas::cursor::{self, Cursor, CursorPlugin};
 use boreas::inspect::{self, InspectApp};
 use boreas::intent::TravelTo;
+use image::RgbaImage;
 use serde::Deserialize;
 
 /// What a game hands the runner.
@@ -66,6 +68,10 @@ pub trait Config: 'static {
 const VIEW: UVec2 = UVec2::new(1280, 720);
 /// Frames after the last scripted one, so screenshot readback lands on disk.
 const TAIL: u32 = 3;
+/// A golden pixel matches while every channel is within this: GPUs raster differently.
+const CHANNEL_TOLERANCE: u8 = 24;
+/// Pixels past the tolerance a frame may hold; a 1 px outline grown to 2 px is 52.
+const MAX_DIFFERING: u32 = 16;
 
 /// A script: how long to run, and what happens on which frame.
 #[derive(Deserialize)]
@@ -113,6 +119,12 @@ struct Beat {
     click_tile: Option<[i32; 2]>,
     #[serde(default)]
     shot: bool,
+    /// With `shot`: the approved image this frame must match, relative to the script.
+    #[serde(default)]
+    golden: Option<PathBuf>,
+    /// `[x, y, w, h]`: the part of the frame the golden compares; all of it by default.
+    #[serde(default)]
+    region: Option<[u32; 4]>,
     /// A note copied into `state.log`, so a run reads as a story.
     #[serde(default)]
     note: Option<String>,
@@ -144,6 +156,33 @@ struct Plan {
     dump_every: Option<u32>,
     budget: Option<Budget>,
     beats: BTreeMap<u32, Vec<Beat>>,
+}
+
+impl Plan {
+    /// Every golden beat, its image resolved against the script's folder.
+    fn goldens(&self, dir: &Path) -> Vec<Golden> {
+        let beats = self
+            .beats
+            .iter()
+            .flat_map(|(f, bs)| bs.iter().map(move |b| (*f, b)));
+        beats
+            .filter_map(|(frame, b)| {
+                let path = dir.join(b.golden.as_ref()?);
+                Some(Golden {
+                    frame,
+                    path,
+                    region: b.region,
+                })
+            })
+            .collect()
+    }
+}
+
+/// A frame and the approved image it must match.
+struct Golden {
+    frame: u32,
+    path: PathBuf,
+    region: Option<[u32; 4]>,
 }
 
 /// Expectations that did not hold, reported at exit.
@@ -200,10 +239,15 @@ pub fn run<C: Config>() {
     let launched = Instant::now();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let windowed = args.iter().any(|a| a == "--window");
+    let blessing = args.iter().any(|a| a == "--bless");
     let Some(path) = args.iter().find(|a| !a.starts_with("--")) else {
-        fail("usage: sandbox <script.toml> [--window]");
+        fail("usage: sandbox <script.toml> [--window | --bless]");
     };
+    if windowed && blessing {
+        fail("--bless runs headless: goldens are the offscreen view");
+    }
     let plan = load(Path::new(path)).unwrap_or_else(|e| fail(&e));
+    let goldens = plan.goldens(Path::new(path).parent().unwrap_or(Path::new("")));
     let name = Path::new(path)
         .file_stem()
         .unwrap_or_default()
@@ -265,7 +309,18 @@ pub fn run<C: Config>() {
         }
     } else {
         C::view_size(&mut app, VIEW);
-        run_headless(app, frames, budget, &out, launched)
+        let mut misses = run_headless(app, frames, budget, &out, launched);
+        if !blessing {
+            misses.extend(goldens.iter().filter_map(|g| check(g, &out).err()));
+        } else if misses.is_empty() {
+            misses = goldens
+                .iter()
+                .filter_map(|g| bless(g, &out).err())
+                .collect();
+        } else {
+            eprintln!("sandbox: nothing blessed: the run missed");
+        }
+        misses
     };
     write_fetches(&fetches, &out);
     println!("sandbox: wrote {}", out.display());
@@ -435,7 +490,7 @@ fn drive(
             mouse.release(beat.button.into());
         }
         if beat.shot {
-            let file = out.0.join(format!("frame_{:04}.png", frame.0));
+            let file = frame_file(&out.0, frame.0);
             let shot = match &target {
                 Some(t) => Screenshot::image(t.0.clone()),
                 None => Screenshot::primary_window(),
@@ -443,6 +498,66 @@ fn drive(
             commands.spawn(shot).observe(save_to_disk(file));
         }
     }
+}
+
+fn frame_file(out: &Path, frame: u32) -> PathBuf {
+    out.join(format!("frame_{frame:04}.png"))
+}
+
+/// The saved frame against its golden; a miss names the frame and the count.
+fn check(g: &Golden, out: &Path) -> Result<(), String> {
+    let at = format!("frame {}: golden {}", g.frame, g.path.display());
+    let file = frame_file(out, g.frame);
+    let got = decode(&file).map_err(|e| format!("{at}: {}: {e}", file.display()))?;
+    let want = decode(&g.path).map_err(|e| format!("{at}: {e}; approve with --bless"))?;
+    let n = differing(&got, &want, g.region).map_err(|e| format!("{at}: {e}"))?;
+    if n > MAX_DIFFERING {
+        return Err(format!(
+            "{at}: {n} pixels differ (max {MAX_DIFFERING}, channel tolerance {CHANNEL_TOLERANCE})"
+        ));
+    }
+    Ok(())
+}
+
+/// Approves the saved frame: copies it over the golden, byte for byte.
+fn bless(g: &Golden, out: &Path) -> Result<(), String> {
+    let from = frame_file(out, g.frame);
+    let at = format!("frame {}: golden {}", g.frame, g.path.display());
+    if let Some(dir) = g.path.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("{at}: {e}"))?;
+    }
+    fs::copy(&from, &g.path).map_err(|e| format!("{at}: {}: {e}", from.display()))?;
+    println!("sandbox: blessed {}", g.path.display());
+    Ok(())
+}
+
+fn decode(path: &Path) -> Result<RgbaImage, String> {
+    image::open(path)
+        .map(|i| i.to_rgba8())
+        .map_err(|e| e.to_string())
+}
+
+/// Pixels in `region` with any channel past `CHANNEL_TOLERANCE`.
+fn differing(got: &RgbaImage, want: &RgbaImage, region: Option<[u32; 4]>) -> Result<u32, String> {
+    let (w, h) = want.dimensions();
+    if got.dimensions() != (w, h) {
+        return Err(format!("frame is {:?}, golden {w}x{h}", got.dimensions()));
+    }
+    let [x, y, rw, rh] = region.unwrap_or([0, 0, w, h]);
+    if x.checked_add(rw).is_none_or(|r| r > w) || y.checked_add(rh).is_none_or(|b| b > h) {
+        return Err(format!(
+            "region {:?} leaves the {w}x{h} frame",
+            [x, y, rw, rh]
+        ));
+    }
+    let off = |px: u32, py: u32| {
+        let (a, b) = (got.get_pixel(px, py).0, want.get_pixel(px, py).0);
+        a.iter()
+            .zip(b)
+            .any(|(a, b)| a.abs_diff(b) > CHANNEL_TOLERANCE)
+    };
+    let cells = (y..y + rh).flat_map(|py| (x..x + rw).map(move |px| (px, py)));
+    Ok(cells.filter(|&(px, py)| off(px, py)).count() as u32)
 }
 
 /// Aims the pointer at this frame's `cursor_at` cell through the camera, and
@@ -587,6 +702,12 @@ fn parse(text: &str) -> Result<Plan, String> {
         for key in beat.press.iter().chain(&beat.release) {
             key_code(key)?;
         }
+        if beat.golden.is_some() && !beat.shot {
+            return Err(format!("frame {}: a golden needs shot = true", beat.frame));
+        }
+        if beat.region.is_some() && beat.golden.is_none() {
+            return Err(format!("frame {}: a region needs a golden", beat.frame));
+        }
         beats.entry(beat.frame).or_default().push(beat);
     }
     Ok(Plan {
@@ -647,6 +768,8 @@ mod tests {
         cursor_at = [1, -3]
         click_tile = [4, -2]
         shot = true
+        golden = "golden/five.png"
+        region = [1, 2, 3, 4]
         note = "hi"
         expect = { turn = "3" }
     "#;
@@ -668,6 +791,133 @@ mod tests {
         assert_eq!(MouseButton::from(Button::Right), MouseButton::Right);
         assert!(beat.mouse_press && beat.mouse_release && beat.shot);
         assert_eq!(beat.expect["turn"], "3");
+        let goldens = plan.goldens(Path::new("scripts"));
+        assert_eq!(goldens[0].path, Path::new("scripts/golden/five.png"));
+        assert_eq!(
+            (goldens[0].frame, goldens[0].region),
+            (5, Some([1, 2, 3, 4]))
+        );
+    }
+
+    #[test]
+    fn a_golden_needs_a_shot_and_a_region_needs_a_golden() {
+        let shotless = parse("frames = 1\n[[at]]\nframe = 1\ngolden = \"g.png\"");
+        assert!(shotless.err().unwrap().contains("needs shot"));
+        let bare = parse("frames = 1\n[[at]]\nframe = 1\nshot = true\nregion = [0, 0, 1, 1]");
+        assert!(bare.err().unwrap().contains("needs a golden"));
+    }
+
+    fn grey(v: u8) -> RgbaImage {
+        RgbaImage::from_pixel(4, 3, image::Rgba([v, v, v, 255]))
+    }
+
+    #[test]
+    fn a_pixel_differs_only_past_the_channel_tolerance_and_inside_the_region() {
+        let want = grey(100);
+        let mut got = grey(100 + CHANNEL_TOLERANCE);
+        assert_eq!(
+            differing(&got, &want, None),
+            Ok(0),
+            "at the tolerance: alike"
+        );
+        got.put_pixel(3, 2, image::Rgba([100, 100, 101 + CHANNEL_TOLERANCE, 255]));
+        assert_eq!(differing(&got, &want, None), Ok(1), "one channel past it");
+        assert_eq!(
+            differing(&got, &want, Some([0, 0, 3, 3])),
+            Ok(0),
+            "outside the region"
+        );
+        assert_eq!(
+            differing(&got, &want, Some([3, 2, 1, 1])),
+            Ok(1),
+            "the region's last pixel"
+        );
+        assert!(
+            differing(&got, &want, Some([3, 2, 2, 1])).is_err(),
+            "region past the edge"
+        );
+        assert!(
+            differing(&RgbaImage::new(3, 3), &want, None).is_err(),
+            "sizes differ"
+        );
+    }
+
+    #[test]
+    fn a_golden_misses_by_frame_and_count_and_bless_approves_the_frame() {
+        let out = std::env::temp_dir().join(format!("anemoi-golden-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out);
+        let g = Golden {
+            frame: 7,
+            path: out.join("golden/seven.png"),
+            region: None,
+        };
+        let missing = check(&g, &out).unwrap_err();
+        assert!(missing.starts_with("frame 7: golden ") && missing.contains("frame_0007.png"));
+        assert!(
+            bless(&g, &out).unwrap_err().starts_with("frame 7: "),
+            "no frame, no bless"
+        );
+        let saved = |v: u8| {
+            let img = RgbaImage::from_pixel(40, 30, image::Rgba([v, v, v, 255]));
+            img.save(frame_file(&out, 7)).unwrap();
+        };
+        saved(10);
+        assert!(
+            check(&g, &out).unwrap_err().contains("--bless"),
+            "no golden yet"
+        );
+        bless(&g, &out).unwrap();
+        assert_eq!(
+            fs::read(&g.path).unwrap(),
+            fs::read(frame_file(&out, 7)).unwrap()
+        );
+        assert_eq!(check(&g, &out), Ok(()));
+        saved(200);
+        let miss = check(&g, &out).unwrap_err();
+        assert!(miss.starts_with("frame 7: golden "), "{miss}");
+        assert!(
+            miss.ends_with(&format!(
+                ": 1200 pixels differ (max {MAX_DIFFERING}, channel tolerance {CHANNEL_TOLERANCE})"
+            )),
+            "{miss}"
+        );
+        let _ = fs::remove_dir_all(&out);
+    }
+
+    /// `MAX_DIFFERING` is a ceiling: that many pixels off still passes, one more misses.
+    #[test]
+    fn a_golden_passes_at_the_max_differing_and_misses_one_past_it() {
+        let out = std::env::temp_dir().join(format!("anemoi-golden-max-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out);
+        fs::create_dir_all(&out).unwrap();
+        let g = Golden {
+            frame: 3,
+            path: out.join("max.png"),
+            region: None,
+        };
+        let want = RgbaImage::from_pixel(40, 30, image::Rgba([10, 10, 10, 255]));
+        want.save(&g.path).unwrap();
+        let off = |n: u32| {
+            let mut got = want.clone();
+            for x in 0..n {
+                got.put_pixel(x, 0, image::Rgba([200, 10, 10, 255]));
+            }
+            got.save(frame_file(&out, 3)).unwrap();
+            check(&g, &out)
+        };
+        assert_eq!(off(MAX_DIFFERING), Ok(()), "at the ceiling");
+        let miss = off(MAX_DIFFERING + 1).unwrap_err();
+        let n = MAX_DIFFERING + 1;
+        assert!(miss.contains(&format!(": {n} pixels differ")), "{miss}");
+        let _ = fs::remove_dir_all(&out);
+    }
+
+    /// A region whose far edge overflows `u32` is a miss, never a panic.
+    #[test]
+    fn a_region_past_u32_is_a_miss_not_a_panic() {
+        let img = grey(0);
+        assert!(differing(&img, &img, Some([u32::MAX, 0, 2, 1])).is_err());
+        assert!(differing(&img, &img, Some([0, u32::MAX, 1, 2])).is_err());
     }
 
     #[test]

@@ -1,5 +1,6 @@
 # The Tile Menu: any click opens it, a second Left click on the cell runs row 0,
-# keys pick rows, a click elsewhere or Escape closes it, and no Turn passes while open.
+# keys pick rows, any other click or Escape closes it, and no Turn passes while open.
+# While open it locks the map: no hover outline on any other cell.
 # A refused row (the walled-off last column, the shut gate) toasts its reason and runs nothing.
 frames = 170
 budget_ms = { startup = 30000, max_frame = 300 }  # loose, as in walk.toml
@@ -52,7 +53,10 @@ shot = true
 [[at]]
 frame = 20
 press = ["S"]
-expect = { tile_menu = "open=true focus=1", sim = "turn=1" }
+note = "the focused row draws lit: active fill, accent edge and letters"
+shot = true
+golden = "golden/tile_menu_open.png"
+expect = { tile_menu = "open=true focus=1", sim = "turn=1", ui = "lit=1 fill=active edge=accent ink=accent" }
 
 [[at]]
 frame = 21
@@ -78,19 +82,29 @@ frame = 26
 mouse_release = true
 
 [[at]]
+frame = 28
+cursor_at = [3, 3]
+note = "the open menu locks the map: no hover on another cell"
+shot = true
+golden = "golden/tile_menu_locked.png"
+expect = { outline = "hover=none target=(1,1)", tile_menu = "open=true at=(1,1)", ui = "modal=1" }
+
+[[at]]
 frame = 30
 cursor_at = [5, 5]
 mouse_press = true
-note = "a click elsewhere closes it and is used up: no Travel"
-expect = { tile_menu = "open=false", intent = "travel=none", sim = "player=(1,0) turn=1" }
+button = "Right"
+note = "a Right click elsewhere closes it and is used up: no Travel, no new menu"
+expect = { tile_menu = "open=false", intent = "travel=none", sim = "player=(1,0) turn=1", outline = "hover=(5,5) target=none", ui = "modal=0" }
 
 [[at]]
 frame = 31
 mouse_release = true
+button = "Right"
 
 [[at]]
 frame = 35
-expect = { sim = "player=(1,0) turn=1", intent = "travel=none" }
+expect = { sim = "player=(1,0) turn=1", intent = "travel=none", ui = "lit=none" }
 
 [[at]]
 frame = 40
@@ -150,7 +164,7 @@ mouse_release = true
 frame = 62
 mouse_press = true
 note = "the second click takes the refused row: a toast, no Turn, the menu stays"
-expect = { refusal = 'toast="no route" refusals=1', tile_menu = "open=true at=(7,2)", sim = "player=(3,0) turn=3", intent = "travel=none", outline = "target=(7,2)" }
+expect = { refusal = 'toast="no route" refusals=1', tile_menu = "open=true at=(7,2)", sim = "player=(3,0) turn=3", intent = "travel=none", outline = "target=(7,2)", ui = "lit=0 fill=active edge=accent ink=muted" }
 
 [[at]]
 frame = 63
@@ -160,6 +174,7 @@ mouse_release = true
 frame = 68
 note = "mid-toast, mid-flash"
 shot = true
+golden = "golden/tile_menu_refused.png"
 
 [[at]]
 frame = 75
