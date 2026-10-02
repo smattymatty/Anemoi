@@ -564,6 +564,10 @@ where
                     .before(OutlineSystems),
             )
             .add_systems(Update, toast::rise)
+            .add_systems(
+                PostUpdate,
+                toast::fit.before(bevy::transform::TransformSystems::Propagate),
+            )
             .inspect("tile_menu", dump::<G>)
             .inspect("refusal", dump_refusal);
     }
@@ -944,7 +948,7 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let red = app.world().resource::<UiTheme>().refused;
-        assert_eq!(toasts(&mut app), [(Vec2::new(72.0, 86.0), red)]);
+        assert_eq!(toasts(&mut app), [(Vec2::new(72.0, 80.0), red)]);
         tap(&mut app, KeyCode::Enter);
         assert_eq!(line(&app, "refusal"), "toast=\"no route\" refusals=2");
         assert_eq!(toasts(&mut app).len(), 1, "one at a time");
