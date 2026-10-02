@@ -2,7 +2,7 @@
 # keys pick rows, a click elsewhere or Escape closes it, and no Turn passes while open.
 # A refused row (the walled-off last column, the shut gate) toasts its reason and runs nothing.
 frames = 170
-budget_ms = { startup = 8000, max_frame = 300 }   # loose, as in walk.toml
+budget_ms = { startup = 30000, max_frame = 300 }  # loose, as in walk.toml
 
 [[at]]
 frame = 3

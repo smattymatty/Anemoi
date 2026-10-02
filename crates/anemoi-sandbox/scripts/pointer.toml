@@ -1,6 +1,6 @@
 # The pointer path: a cell aimed through the camera, a click, a Travel there.
 frames = 30
-budget_ms = { startup = 8000, max_frame = 300 }   # loose, as in walk.toml
+budget_ms = { startup = 30000, max_frame = 300 }  # loose, as in walk.toml
 
 [[at]]
 frame = 5

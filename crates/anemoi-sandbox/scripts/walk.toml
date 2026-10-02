@@ -1,6 +1,6 @@
 # A held key walks; a click Travels one Step per frame and stops on arrival.
 frames = 40
-budget_ms = { startup = 8000, max_frame = 300 }   # loose: a cold start reaches ~3.5 s
+budget_ms = { startup = 30000, max_frame = 300 }  # startup: CI lavapipe cold start hit 15.3 s; max_frame is the gate
 
 [[at]]
 frame = 5
