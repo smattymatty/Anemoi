@@ -61,6 +61,9 @@ jobs:
         run: |
           cargo run --locked -q -p anemoi-sandbox --example walk -- crates/anemoi-sandbox/scripts/walk.toml
           cargo run --locked -q -p anemoi-sandbox --example walk -- crates/anemoi-sandbox/scripts/pointer.toml
+          cargo run --locked -q -p anemoi-sandbox --example walk -- crates/anemoi-sandbox/scripts/hover.toml
+          cargo run --locked -q -p anemoi-sandbox --example walk -- crates/anemoi-sandbox/scripts/tile_menu.toml
+          cargo run --locked -q -p anemoi-sandbox --example walk -- crates/anemoi-sandbox/scripts/tile_cursor.toml
       - name: no 3D in the engine
         # A failed `cargo tree` fails the step; it never reads as a clean tree.
         run: |

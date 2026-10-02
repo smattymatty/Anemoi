@@ -1,0 +1,173 @@
+# The tile cursor: L turns it on, the eight direction keys move a target cell
+# and never step, Enter opens its cell's menu, Escape and L end it; so does a map click.
+frames = 50
+budget_ms = { startup = 8000, max_frame = 300 }   # loose, as in walk.toml
+
+[[at]]
+frame = 3
+press = ["L"]
+expect = { tile_menu = "cursor=(0,0) open=false", intent = "owner=menu", outline = "target=(0,0)" }
+
+[[at]]
+frame = 4
+release = ["L"]
+
+[[at]]
+frame = 5
+press = ["D"]
+expect = { tile_menu = "cursor=(1,0)", sim = "player=(0,0) turn=0" }
+
+[[at]]
+frame = 6
+release = ["D"]
+
+[[at]]
+frame = 7
+press = ["W"]
+expect = { tile_menu = "cursor=(1,1)" }
+
+[[at]]
+frame = 8
+release = ["W"]
+
+[[at]]
+frame = 9
+press = ["Right"]
+expect = { tile_menu = "cursor=(2,1)" }
+
+[[at]]
+frame = 10
+release = ["Right"]
+
+[[at]]
+frame = 11
+press = ["S"]
+expect = { tile_menu = "cursor=(2,0)" }
+
+[[at]]
+frame = 12
+release = ["S"]
+
+[[at]]
+frame = 13
+press = ["Left"]
+expect = { tile_menu = "cursor=(1,0)" }
+
+[[at]]
+frame = 14
+release = ["Left"]
+
+[[at]]
+frame = 15
+press = ["A"]
+expect = { tile_menu = "cursor=(0,0)" }
+
+[[at]]
+frame = 16
+release = ["A"]
+
+[[at]]
+frame = 17
+press = ["Down"]
+note = "the grid's edge holds it"
+expect = { tile_menu = "cursor=(0,0)", sim = "player=(0,0) turn=0" }
+
+[[at]]
+frame = 18
+release = ["Down"]
+
+[[at]]
+frame = 19
+press = ["Up"]
+expect = { tile_menu = "cursor=(0,1)", outline = "target=(0,1)" }
+
+[[at]]
+frame = 20
+release = ["Up"]
+shot = true
+
+[[at]]
+frame = 22
+press = ["Enter"]
+expect = { tile_menu = "open=true at=(0,1) rows=Move,Look focus=0 cursor=(0,1)", sim = "turn=0" }
+
+[[at]]
+frame = 23
+release = ["Enter"]
+shot = true
+
+[[at]]
+frame = 25
+press = ["D"]
+note = "under its menu the cursor holds still"
+expect = { tile_menu = "open=true cursor=(0,1)", sim = "player=(0,0) turn=0" }
+
+[[at]]
+frame = 26
+release = ["D"]
+
+[[at]]
+frame = 27
+press = ["Enter"]
+note = "row 0 Steps and ends the cursor"
+expect = { tile_menu = "open=false cursor=none", sim = "player=(0,1) turn=1", intent = "owner=gameplay" }
+
+[[at]]
+frame = 28
+release = ["Enter"]
+
+[[at]]
+frame = 30
+press = ["L"]
+expect = { tile_menu = "cursor=(0,1)" }
+
+[[at]]
+frame = 31
+release = ["L"]
+
+[[at]]
+frame = 32
+press = ["Escape"]
+expect = { tile_menu = "cursor=none", intent = "owner=gameplay", outline = "target=none" }
+
+[[at]]
+frame = 33
+release = ["Escape"]
+
+[[at]]
+frame = 35
+press = ["L"]
+
+[[at]]
+frame = 36
+release = ["L"]
+
+[[at]]
+frame = 37
+press = ["L"]
+expect = { tile_menu = "cursor=none" }
+
+[[at]]
+frame = 38
+release = ["L"]
+
+[[at]]
+frame = 40
+press = ["L", "1"]
+cursor_at = [3, 3]
+note = "the cursor on, clicks to the Tile Menu"
+
+[[at]]
+frame = 41
+release = ["L", "1"]
+expect = { tile_menu = "cursor=(0,1)" }
+
+[[at]]
+frame = 42
+mouse_press = true
+note = "a map click ends the cursor and opens the clicked cell's menu"
+expect = { tile_menu = "open=true at=(3,3) cursor=none", sim = "turn=1" }
+
+[[at]]
+frame = 43
+mouse_release = true

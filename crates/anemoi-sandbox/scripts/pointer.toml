@@ -6,7 +6,7 @@ budget_ms = { startup = 8000, max_frame = 300 }   # loose, as in walk.toml
 frame = 5
 cursor_at = [2, 3]
 note = "the cursor rests on (2,3); nothing moves yet"
-expect = { cursor = "at=(680,304)", intent = "travel=none", sim = "player=(0,0)" }
+expect = { cursor = "at=(680,304)", intent = "clicks=travel travel=none", sim = "player=(0,0)" }
 
 [[at]]
 frame = 10

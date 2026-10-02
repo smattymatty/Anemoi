@@ -53,6 +53,24 @@ impl Default for Bindings {
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TravelTo(pub Cell);
 
+/// Who a map click goes to: `click_cell`'s Travel, or the Tile Menu.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ClickMode {
+    #[default]
+    Travel,
+    TileMenu,
+}
+
+impl ClickMode {
+    /// The `clicks=` token the `intent` dump carries.
+    pub fn token(self) -> &'static str {
+        match self {
+            ClickMode::Travel => "travel",
+            ClickMode::TileMenu => "menu",
+        }
+    }
+}
+
 /// Where Travel is heading, if anywhere.
 #[derive(Resource, Default, Debug, PartialEq, Eq)]
 pub struct Travel(pub Option<Cell>);
@@ -245,7 +263,9 @@ fn dump(w: &World) -> String {
     let ended = w.get_resource::<Run>().is_some_and(|r| !r.muted.is_empty());
     let run = if ended { "ended" } else { "live" };
     let owner = owner::of(w).token();
-    format!("owner={owner} mode={mode:?} travel={travel} run={run}")
+    let clicks = w.get_resource::<ClickMode>().copied().unwrap_or_default();
+    let clicks = clicks.token();
+    format!("owner={owner} mode={mode:?} clicks={clicks} travel={travel} run={run}")
 }
 
 /// Input for `G`'s player Unit; adds `PacePlugin<G>` if it is not in yet.
@@ -268,6 +288,7 @@ impl<G: Game> Plugin for IntentPlugin<G> {
         app.init_resource::<Bindings>()
             .init_resource::<InputBase>()
             .init_resource::<Travel>()
+            .init_resource::<ClickMode>()
             .init_resource::<Run>()
             .init_resource::<Time>()
             .init_resource::<ButtonInput<KeyCode>>()
@@ -276,7 +297,7 @@ impl<G: Game> Plugin for IntentPlugin<G> {
             .add_systems(
                 Update,
                 (
-                    click_cell,
+                    click_cell.run_if(resource_equals(ClickMode::Travel)),
                     read_input::<G>.run_if(resource_exists::<Sim<G>>),
                 )
                     .chain()
@@ -600,7 +621,7 @@ mod tests {
         app.update();
         let got = crate::inspect::snapshot(app.world());
         let line = |name| got.iter().find(|(n, _)| *n == name).unwrap().1.clone();
-        let want = "owner=gameplay mode=Exploring travel=(0,3) run=live";
+        let want = "owner=gameplay mode=Exploring clicks=travel travel=(0,3) run=live";
         assert_eq!(line("intent"), want);
         assert_eq!(line("pace"), "waiting=0 locked=false cadence=150");
         assert_eq!(line("sim"), "turn=1 player=(0,1)");
@@ -608,8 +629,13 @@ mod tests {
         app.update();
         let got = crate::inspect::snapshot(app.world());
         let intent = got.iter().find(|(n, _)| *n == "intent").unwrap();
-        let want = "owner=gameplay mode=Encounter travel=none run=live";
+        let want = "owner=gameplay mode=Encounter clicks=travel travel=none run=live";
         assert_eq!(intent.1, want);
+        app.insert_resource(ClickMode::TileMenu);
+        app.update();
+        let got = crate::inspect::snapshot(app.world());
+        let intent = got.iter().find(|(n, _)| *n == "intent").unwrap();
+        assert!(intent.1.contains(" clicks=menu "), "{}", intent.1);
     }
 
     #[test]

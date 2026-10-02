@@ -1,8 +1,11 @@
 pub mod cursor;
 pub mod inspect;
 pub mod intent;
+pub mod outline;
 pub mod owner;
 pub mod pace;
 pub mod palette;
+pub mod tile_menu;
+pub mod toast;
 pub mod tween;
 pub mod ui;

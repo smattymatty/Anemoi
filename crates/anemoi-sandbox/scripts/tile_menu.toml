@@ -1,0 +1,221 @@
+# The Tile Menu: any click opens it, a second Left click on the cell runs row 0,
+# keys pick rows, a click elsewhere or Escape closes it, and no Turn passes while open.
+# A refused row (the walled-off last column, the shut gate) toasts its reason and runs nothing.
+frames = 170
+budget_ms = { startup = 8000, max_frame = 300 }   # loose, as in walk.toml
+
+[[at]]
+frame = 3
+press = ["1"]
+note = "the walk example hands clicks to the Tile Menu"
+
+[[at]]
+frame = 4
+release = ["1"]
+expect = { intent = "clicks=menu" }
+
+[[at]]
+frame = 5
+cursor_at = [1, 0]
+mouse_press = true
+note = "Left opens it on the neighbour; no Step, no Travel"
+expect = { tile_menu = "open=true at=(1,0) rows=Move,Look focus=0 refused=0", intent = "owner=menu travel=none", sim = "player=(0,0) turn=0", outline = "target=(1,0)" }
+
+[[at]]
+frame = 6
+mouse_release = true
+
+[[at]]
+frame = 10
+mouse_press = true
+note = "a second Left click on the same cell runs row 0: the Step"
+expect = { tile_menu = "open=false", sim = "player=(1,0) turn=1", intent = "owner=gameplay" }
+
+[[at]]
+frame = 11
+mouse_release = true
+
+[[at]]
+frame = 15
+cursor_at = [1, 1]
+mouse_press = true
+button = "Right"
+note = "Right opens it too"
+expect = { tile_menu = "open=true at=(1,1) rows=Move,Look focus=0", sim = "turn=1" }
+
+[[at]]
+frame = 16
+mouse_release = true
+button = "Right"
+shot = true
+
+[[at]]
+frame = 20
+press = ["S"]
+expect = { tile_menu = "open=true focus=1", sim = "turn=1" }
+
+[[at]]
+frame = 21
+release = ["S"]
+
+[[at]]
+frame = 22
+press = ["Enter"]
+note = "Look: a message for the game, no Intent, no Turn"
+expect = { tile_menu = "open=false looks=1", sim = "player=(1,0) turn=1" }
+
+[[at]]
+frame = 23
+release = ["Enter"]
+
+[[at]]
+frame = 25
+mouse_press = true
+expect = { tile_menu = "open=true at=(1,1)" }
+
+[[at]]
+frame = 26
+mouse_release = true
+
+[[at]]
+frame = 30
+cursor_at = [5, 5]
+mouse_press = true
+note = "a click elsewhere closes it and is used up: no Travel"
+expect = { tile_menu = "open=false", intent = "travel=none", sim = "player=(1,0) turn=1" }
+
+[[at]]
+frame = 31
+mouse_release = true
+
+[[at]]
+frame = 35
+expect = { sim = "player=(1,0) turn=1", intent = "travel=none" }
+
+[[at]]
+frame = 40
+cursor_at = [4, 4]
+mouse_press = true
+note = "a distant open cell offers Travel then Look"
+expect = { tile_menu = "open=true at=(4,4) rows=Move,Look refused=0" }
+
+[[at]]
+frame = 41
+mouse_release = true
+
+[[at]]
+frame = 42
+press = ["Escape"]
+expect = { tile_menu = "open=false", sim = "player=(1,0) turn=1" }
+
+[[at]]
+frame = 43
+release = ["Escape"]
+
+[[at]]
+frame = 45
+cursor_at = [3, 0]
+mouse_press = true
+
+[[at]]
+frame = 46
+mouse_release = true
+
+[[at]]
+frame = 50
+mouse_press = true
+note = "the second click on a distant cell Travels; the first Step goes this frame"
+expect = { tile_menu = "open=false", intent = "travel=(3,0)", sim = "player=(2,0) turn=2" }
+
+[[at]]
+frame = 51
+mouse_release = true
+
+[[at]]
+frame = 55
+expect = { sim = "player=(3,0) turn=3", intent = "travel=none" }
+
+[[at]]
+frame = 57
+cursor_at = [7, 2]
+mouse_press = true
+note = "past the wall line: row 0 refused, no route"
+expect = { tile_menu = "open=true at=(7,2) rows=Move,Look focus=0 refused=1", refusal = "toast=none refusals=0" }
+
+[[at]]
+frame = 58
+mouse_release = true
+
+[[at]]
+frame = 62
+mouse_press = true
+note = "the second click takes the refused row: a toast, no Turn, the menu stays"
+expect = { refusal = 'toast="no route" refusals=1', tile_menu = "open=true at=(7,2)", sim = "player=(3,0) turn=3", intent = "travel=none", outline = "target=(7,2)" }
+
+[[at]]
+frame = 63
+mouse_release = true
+
+[[at]]
+frame = 68
+note = "mid-toast, mid-flash"
+shot = true
+
+[[at]]
+frame = 75
+press = ["Enter"]
+note = "picking it by key refuses again"
+expect = { refusal = 'toast="no route" refusals=2', sim = "turn=3" }
+
+[[at]]
+frame = 76
+release = ["Enter"]
+
+[[at]]
+frame = 78
+press = ["Escape"]
+expect = { tile_menu = "open=false" }
+
+[[at]]
+frame = 79
+release = ["Escape"]
+
+[[at]]
+frame = 140
+note = "the toast has gone"
+expect = { refusal = "toast=none refusals=2", sim = "player=(3,0) turn=3" }
+
+[[at]]
+frame = 142
+cursor_at = [6, 4]
+mouse_press = true
+note = "a distant shut gate: row 0 refused on the spot, no walk"
+expect = { tile_menu = "open=true at=(6,4) rows=Move,Look focus=0 refused=1", intent = "travel=none" }
+
+[[at]]
+frame = 143
+mouse_release = true
+
+[[at]]
+frame = 145
+mouse_press = true
+note = "the gate's reason, not no route"
+expect = { refusal = 'toast="locked" refusals=3', tile_menu = "open=true at=(6,4)", sim = "player=(3,0) turn=3", intent = "travel=none" }
+
+[[at]]
+frame = 146
+mouse_release = true
+
+[[at]]
+frame = 150
+note = "the gate's toast"
+shot = true
+
+[[at]]
+frame = 152
+press = ["Escape"]
+expect = { tile_menu = "open=false", outline = "target=none" }
+
+[[at]]
+frame = 153
+release = ["Escape"]

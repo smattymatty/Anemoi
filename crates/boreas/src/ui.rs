@@ -6,7 +6,7 @@ use aeolus::palette::Palette;
 use bevy::audio::Volume;
 use bevy::ecs::change_detection::Tick;
 use bevy::ecs::system::SystemChangeTick;
-use bevy::input::mouse::MouseMotion;
+use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::prelude::*;
 
 /// Resolved menu colours. `Default` is a neutral grey; games build theirs with
@@ -21,9 +21,15 @@ pub struct UiTheme {
     pub muted: Color,
     pub accent: Color,
     pub veil: Color,
+    /// The outline under the pointer; faint.
+    pub hover: Color,
+    /// The outline on the Tile Menu's cell.
+    pub target: Color,
+    /// A refused Offer's flash.
+    pub refused: Color,
 }
 
-/// A theme as palette indices; the veil also takes an opacity.
+/// A theme as palette indices; the veil and the hover outline also take an opacity.
 #[derive(Clone, Copy, Debug)]
 pub struct ThemeIndices {
     pub panel: u8,
@@ -35,6 +41,10 @@ pub struct ThemeIndices {
     pub accent: u8,
     pub veil: u8,
     pub veil_alpha: u8,
+    pub hover: u8,
+    pub hover_alpha: u8,
+    pub target: u8,
+    pub refused: u8,
 }
 
 /// A theme index past the palette's end.
@@ -55,6 +65,10 @@ impl UiTheme {
             accent: at(ix.accent)?,
             veil: palette::alpha(source, ix.veil.into(), ix.veil_alpha)
                 .ok_or(OutOfPalette(ix.veil))?,
+            hover: palette::alpha(source, ix.hover.into(), ix.hover_alpha)
+                .ok_or(OutOfPalette(ix.hover))?,
+            target: at(ix.target)?,
+            refused: at(ix.refused)?,
         })
     }
 }
@@ -70,6 +84,9 @@ impl Default for UiTheme {
             muted: Color::srgb_u8(140, 140, 148),
             accent: Color::srgb_u8(220, 184, 88),
             veil: Color::srgba_u8(0, 0, 0, 235),
+            hover: Color::srgba_u8(255, 255, 255, 80),
+            target: Color::srgb_u8(220, 184, 88),
+            refused: Color::srgb_u8(200, 48, 48),
         }
     }
 }
@@ -207,6 +224,51 @@ pub fn button(label: impl Into<String>, index: usize, theme: &UiTheme) -> impl B
     )
 }
 
+/// A compact row for a small menu beside a 16 px cell: `button` is 48 px tall.
+pub fn row(label: impl Into<String>, index: usize, theme: &UiTheme) -> impl Bundle {
+    (
+        compact(index, theme),
+        children![text(label, ROW_TEXT, theme.foreground)],
+    )
+}
+
+/// A compact row that cannot be taken: its label muted, its reason beside it.
+pub fn refused_row(
+    label: impl Into<String>,
+    reason: impl Into<String>,
+    index: usize,
+    theme: &UiTheme,
+) -> impl Bundle {
+    (
+        compact(index, theme),
+        children![
+            text(label, ROW_TEXT, theme.muted),
+            text(reason, ROW_TEXT, theme.muted)
+        ],
+    )
+}
+
+const ROW_TEXT: f32 = 12.0;
+
+fn compact(index: usize, theme: &UiTheme) -> impl Bundle {
+    (
+        Button,
+        StyledButton,
+        Focusable(index),
+        Node {
+            height: px(18),
+            align_items: AlignItems::Center,
+            column_gap: px(8),
+            padding: UiRect::axes(px(6), px(1)),
+            border: UiRect::all(px(1)),
+            ..default()
+        },
+        BackgroundColor(theme.button),
+        BorderColor::all(theme.muted),
+        Visibility::default(),
+    )
+}
+
 pub fn corner_button(label: impl Into<String>, theme: &UiTheme) -> impl Bundle {
     (
         Button,
@@ -228,10 +290,10 @@ pub fn corner_button(label: impl Into<String>, theme: &UiTheme) -> impl Bundle {
 }
 
 /// Sends the same activation message for a click or Enter/Space on the focused button.
-/// Keys move only the [`newest_marked`] menu. A click always activates. Hover selects only while the pointer leads, and
+/// Keys and the wheel move only the [`newest_marked`] menu. A click always activates. Hover selects only while the pointer leads, and
 /// then every frame, so a moving mouse takes focus back from the keys at once.
 pub fn navigate_and_activate(
-    keys: Res<ButtonInput<KeyCode>>,
+    (keys, mut wheel): (Res<ButtonInput<KeyCode>>, MessageReader<MouseWheel>),
     lead: Res<UiLead>,
     ticks: SystemChangeTick,
     mut menus: Query<(Entity, &mut MenuSelection, Option<Ref<TakesInput>>)>,
@@ -258,18 +320,20 @@ pub fn navigate_and_activate(
             _ => {}
         }
     }
+    let scroll: f32 = wheel.read().map(|w| w.y).sum();
     let marks = menus.iter().filter_map(|(e, _, m)| Some((m?.added(), e)));
     let newest = newest_marked(marks, ticks.this_run());
     if let Some((menu_entity, mut menu, _)) = newest.and_then(|e| menus.get_mut(e).ok())
         && menu.count > 0
     {
         let before = menu.selected;
-        if keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyW) {
+        if keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyW) || scroll > 0.0 {
             menu.selected = (menu.selected + menu.count - 1) % menu.count;
         }
         if keys.just_pressed(KeyCode::ArrowDown)
             || keys.just_pressed(KeyCode::KeyS)
             || keys.just_pressed(KeyCode::Tab)
+            || scroll < 0.0
         {
             menu.selected = (menu.selected + 1) % menu.count;
         }
@@ -359,6 +423,7 @@ impl Plugin for UiPlugin {
             .init_resource::<UiLead>()
             .add_message::<MouseMotion>()
             .add_message::<CursorMoved>()
+            .add_message::<MouseWheel>()
             .add_message::<UiActivated>()
             .add_message::<UiFocused>()
             .add_systems(
@@ -486,6 +551,10 @@ mod tests {
         accent: 7,
         veil: 6,
         veil_alpha: 99,
+        hover: 6,
+        hover_alpha: 80,
+        target: 4,
+        refused: 3,
     };
 
     fn test_palette() -> Palette {
@@ -504,6 +573,9 @@ mod tests {
         assert_eq!(theme.muted, rgb(128, 128, 128));
         assert_eq!(theme.accent, rgb(10, 20, 30));
         assert_eq!(theme.veil, Color::srgba_u8(255, 255, 255, 99));
+        assert_eq!(theme.hover, Color::srgba_u8(255, 255, 255, 80));
+        assert_eq!(theme.target, rgb(40, 40, 200));
+        assert_eq!(theme.refused, rgb(200, 40, 40));
     }
 
     #[test]
@@ -517,11 +589,27 @@ mod tests {
             UiTheme::from_palette(&test_palette(), ix),
             Err(OutOfPalette(8))
         );
-        let ix = ThemeIndices { veil: 8, ..INDICES };
-        assert_eq!(
-            UiTheme::from_palette(&test_palette(), ix),
-            Err(OutOfPalette(8))
-        );
+        for ix in [
+            ThemeIndices { veil: 8, ..INDICES },
+            ThemeIndices {
+                hover: 9,
+                ..INDICES
+            },
+            ThemeIndices {
+                target: 10,
+                ..INDICES
+            },
+            ThemeIndices {
+                refused: 11,
+                ..INDICES
+            },
+        ] {
+            let bad = [ix.veil, ix.hover, ix.target, ix.refused].into_iter().max();
+            assert_eq!(
+                UiTheme::from_palette(&test_palette(), ix),
+                Err(OutOfPalette(bad.unwrap()))
+            );
+        }
     }
 
     /// The classic bug: a menu opens under a resting cursor. The keys keep the
@@ -577,6 +665,30 @@ mod tests {
         let stats = app.world().resource::<UiFeedbackStats>();
         assert_eq!((stats.focus, stats.activate), (1, 1));
         assert_eq!(fill(&app, button), UiTheme::default().pressed);
+    }
+
+    fn scroll(app: &mut App, y: f32) {
+        app.world_mut().write_message(MouseWheel {
+            unit: bevy::input::mouse::MouseScrollUnit::Line,
+            x: 0.0,
+            y,
+            window: Entity::PLACEHOLDER,
+            phase: bevy::input::touch::TouchPhase::Moved,
+        });
+        app.update();
+    }
+
+    /// The wheel moves focus as W/S do, with wrap and the same focus sound.
+    #[test]
+    fn the_wheel_moves_focus_with_wrap() {
+        let (mut app, panel, _) = menu();
+        scroll(&mut app, -1.0);
+        assert_eq!(selected(&app, panel), 1, "down");
+        scroll(&mut app, -1.0);
+        assert_eq!(selected(&app, panel), 0, "wraps past the end");
+        scroll(&mut app, 1.0);
+        assert_eq!(selected(&app, panel), 1, "up wraps past the start");
+        assert_eq!(app.world().resource::<UiFeedbackStats>().focus, 3);
     }
 
     /// An unmarked menu (an always-visible button) ignores keys, keeps the pointer.

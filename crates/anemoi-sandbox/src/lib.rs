@@ -605,6 +605,7 @@ fn key_code(name: &str) -> Result<KeyCode, String> {
         "A" => KeyCode::KeyA,
         "S" => KeyCode::KeyS,
         "D" => KeyCode::KeyD,
+        "L" => KeyCode::KeyL,
         "Up" => KeyCode::ArrowUp,
         "Down" => KeyCode::ArrowDown,
         "Left" => KeyCode::ArrowLeft,
@@ -618,7 +619,7 @@ fn key_code(name: &str) -> Result<KeyCode, String> {
         "3" => KeyCode::Digit3,
         other => {
             return Err(format!(
-                "unknown key {other:?}; known: W A S D Up Down Left Right Space Enter Escape 0 1 2 3"
+                "unknown key {other:?}; known: W A S D L Up Down Left Right Space Enter Escape 0 1 2 3"
             ));
         }
     })
@@ -680,6 +681,7 @@ mod tests {
 
     #[test]
     fn digit_keys_map_and_unknown_keys_fail() {
+        assert_eq!(key_code("L"), Ok(KeyCode::KeyL));
         let digits = ["0", "1", "2", "3"].map(|k| key_code(k).unwrap());
         let want = [
             KeyCode::Digit0,

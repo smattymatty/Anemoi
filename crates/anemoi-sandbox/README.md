@@ -33,7 +33,7 @@ budget_ms = { startup = 8000, max_frame = 300 }  # optional wall-clock ceilings
 
 [[at]]
 frame = 5
-press = ["W"]          # W A S D Up Down Left Right Space Enter Escape 0 1 2 3
+press = ["W"]          # W A S D L Up Down Left Right Space Enter Escape 0 1 2 3
 release = []
 cursor_at = [2, 3]     # pointer onto a cell through the camera; it rests there
 mouse_press = false
@@ -45,6 +45,11 @@ note = "copied into state.log"
 expect = { turn = "3" }  # per dump: tokens its line must hold whole
 ```
 
-`examples/walk.rs` is the smallest game it drives:
+`examples/walk.rs` is the smallest game it drives, with a wall line at x=6
+and a shut gate at (6,4) whose Condition the walker lacks:
 `cargo run -p anemoi-sandbox --example walk -- crates/anemoi-sandbox/scripts/walk.toml`;
-`scripts/pointer.toml` clicks a cell through the real pointer path.
+`scripts/pointer.toml` clicks a cell through the real pointer path;
+`scripts/hover.toml` aims at cells on and off the grid and shoots the outline;
+`scripts/tile_menu.toml` (`1` hands clicks to the Tile Menu) opens, runs, Looks and
+closes it, and takes refused rows past the wall ("no route") and at the gate
+("locked"): a toast, no Turn; `scripts/tile_cursor.toml` drives the tile cursor (`L`).

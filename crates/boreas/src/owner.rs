@@ -1,6 +1,7 @@
 //! Who a press belongs to. The game sets the base; a menu marked `TakesInput`
 //! overrides it, so one key never both steps and moves a menu's focus.
 
+use bevy::ecs::query::QueryFilter;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
@@ -43,14 +44,15 @@ fn resolve(base: InputBase, marked: bool) -> Owner {
     }
 }
 
-/// Reads the owner in a system; no ordering, no frame of lag.
+/// Reads the owner in a system; no ordering, no frame of lag. `F` narrows which
+/// marks count: the Tile Menu ignores its own tile cursor's.
 #[derive(SystemParam)]
-pub struct InputOwner<'w, 's> {
+pub struct InputOwner<'w, 's, F: QueryFilter + 'static = ()> {
     base: Option<Res<'w, InputBase>>,
-    marked: Query<'w, 's, (), With<TakesInput>>,
+    marked: Query<'w, 's, (), (With<TakesInput>, F)>,
 }
 
-impl InputOwner<'_, '_> {
+impl<F: QueryFilter + 'static> InputOwner<'_, '_, F> {
     pub fn get(&self) -> Owner {
         let base = self.base.as_deref().copied().unwrap_or_default();
         resolve(base, !self.marked.is_empty())
@@ -227,6 +229,26 @@ mod tests {
         app.update();
         assert_eq!(cell(&app), Cell::new(0, 0));
         assert!(intent_line(&app).starts_with("owner=menu "));
+    }
+
+    #[derive(Component)]
+    struct Ignored;
+
+    /// A filter drops its own marks and keeps every other.
+    #[test]
+    fn a_filtered_owner_ignores_only_the_filtered_marks() {
+        use bevy::ecs::system::RunSystemOnce;
+        let owner = |w: &mut World| {
+            w.run_system_once(|o: InputOwner<Without<Ignored>>| o.get())
+                .unwrap()
+        };
+        let mut world = World::new();
+        world.spawn((TakesInput, Ignored));
+        assert_eq!(owner(&mut world), Owner::Gameplay);
+        world.insert_resource(InputBase::Nobody);
+        assert_eq!(owner(&mut world), Owner::Nobody, "the base still counts");
+        world.spawn(TakesInput);
+        assert_eq!(owner(&mut world), Owner::Menu);
     }
 
     #[test]
