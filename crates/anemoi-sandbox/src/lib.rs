@@ -24,6 +24,8 @@ use bevy::asset::io::{
 use bevy::camera::RenderTarget;
 use bevy::diagnostic::{FrameCount, update_frame_count};
 use bevy::input::InputSystems;
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
+use bevy::input::touch::TouchPhase;
 use bevy::prelude::*;
 use bevy::render::RenderPlugin;
 use bevy::render::render_resource::{
@@ -114,6 +116,9 @@ struct Beat {
     /// Puts the pointer on a cell's screen position, where it stays.
     #[serde(default)]
     cursor_at: Option<[i32; 2]>,
+    /// Wheel lines this frame: up is positive.
+    #[serde(default)]
+    scroll: f32,
     /// A Travel request straight to the game, skipping the pointer.
     #[serde(default)]
     click_tile: Option<[i32; 2]>,
@@ -473,8 +478,11 @@ fn drive(
     plan: Res<Plan>,
     out: Res<Out>,
     target: Option<Res<Target>>,
-    mut keys: ResMut<ButtonInput<KeyCode>>,
-    mut mouse: ResMut<ButtonInput<MouseButton>>,
+    (mut keys, mut mouse, mut wheel): (
+        ResMut<ButtonInput<KeyCode>>,
+        ResMut<ButtonInput<MouseButton>>,
+        MessageWriter<MouseWheel>,
+    ),
 ) {
     for beat in plan.beats.get(&frame.0).into_iter().flatten() {
         for key in &beat.press {
@@ -488,6 +496,15 @@ fn drive(
         }
         if beat.mouse_release {
             mouse.release(beat.button.into());
+        }
+        if beat.scroll != 0.0 {
+            wheel.write(MouseWheel {
+                unit: MouseScrollUnit::Line,
+                x: 0.0,
+                y: beat.scroll,
+                window: Entity::PLACEHOLDER,
+                phase: TouchPhase::Moved,
+            });
         }
         if beat.shot {
             let file = frame_file(&out.0, frame.0);
@@ -643,6 +660,9 @@ fn report(frame: u32, beats: &[Beat], dumps: &[(&str, String)]) -> (String, Vec<
         if beat.mouse_release {
             line += &format!(" mouse=[-{:?}]", beat.button);
         }
+        if beat.scroll != 0.0 {
+            line += &format!(" scroll={}", beat.scroll);
+        }
         if let Some([x, y]) = beat.click_tile {
             line += &format!(" click_tile=({x},{y})");
         }
@@ -734,13 +754,15 @@ fn key_code(name: &str) -> Result<KeyCode, String> {
         "Space" => KeyCode::Space,
         "Enter" => KeyCode::Enter,
         "Escape" => KeyCode::Escape,
+        "=" => KeyCode::Equal,
+        "-" => KeyCode::Minus,
         "0" => KeyCode::Digit0,
         "1" => KeyCode::Digit1,
         "2" => KeyCode::Digit2,
         "3" => KeyCode::Digit3,
         other => {
             return Err(format!(
-                "unknown key {other:?}; known: W A S D L V Up Down Left Right Space Enter Escape 0 1 2 3"
+                "unknown key {other:?}; known: W A S D L V Up Down Left Right Space Enter Escape = - 0 1 2 3"
             ));
         }
     })
@@ -767,6 +789,7 @@ mod tests {
         mouse_release = true
         button = "Right"
         cursor_at = [1, -3]
+        scroll = -2.0
         click_tile = [4, -2]
         shot = true
         golden = "golden/five.png"
@@ -787,6 +810,7 @@ mod tests {
             (beat.cursor_at, beat.button),
             (Some([1, -3]), Button::Right)
         );
+        assert_eq!(beat.scroll, -2.0);
         let left = parse("frames = 1\n[[at]]\nframe = 1\nmouse_press = true").unwrap();
         assert_eq!(left.beats[&1][0].button, Button::Left, "Left by default");
         assert_eq!(MouseButton::from(Button::Right), MouseButton::Right);
@@ -941,6 +965,8 @@ mod tests {
             KeyCode::Digit3,
         ];
         assert_eq!(digits, want);
+        assert_eq!(key_code("="), Ok(KeyCode::Equal));
+        assert_eq!(key_code("-"), Ok(KeyCode::Minus));
         assert!(parse("frames = 1\n[[at]]\nframe = 1\nrelease = [\"4\"]").is_err());
     }
 
@@ -954,7 +980,7 @@ mod tests {
             "{line}"
         );
         assert!(
-            line.contains(" cursor_at=(1,-3) mouse=[+Right] mouse=[-Right] click_tile=(4,-2) note=\"hi\" | turn: 13"),
+            line.contains(" cursor_at=(1,-3) mouse=[+Right] mouse=[-Right] scroll=-2 click_tile=(4,-2) note=\"hi\" | turn: 13"),
             "{line}"
         );
         assert_eq!(misses.len(), 1, "\"3\" is not a whole token of \"13\"");

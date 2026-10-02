@@ -33,12 +33,13 @@ budget_ms = { startup = 8000, max_frame = 300 }  # optional wall-clock ceilings
 
 [[at]]
 frame = 5
-press = ["W"]          # W A S D L V Up Down Left Right Space Enter Escape 0 1 2 3
+press = ["W"]          # W A S D L V Up Down Left Right Space Enter Escape = - 0 1 2 3
 release = []
 cursor_at = [2, 3]     # pointer onto a cell through the camera; it rests there
 mouse_press = false
 mouse_release = false
 button = "Left"        # or "Right": the button this beat's press/release uses
+scroll = 1.0           # wheel lines this frame; up is positive
 click_tile = [2, 3]    # Travel injected past the pointer, via Config::click_tile
 shot = true
 golden = "golden/walk.png"  # with shot: the approved frame, relative to the script
