@@ -11,16 +11,16 @@ use bevy::ecs::spawn::SpawnWith;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
-use crate::cursor::Cursor;
 use crate::inspect::InspectApp;
 use crate::intent::{Bindings, ClickMode, IntentPlugin, TravelTo};
-use crate::outline::{self, OutlinePlugin, OutlineSystems, Target, pointed};
+use crate::outline::{self, OutlinePlugin, OutlineSystems, Pointer, Target};
 use crate::owner::{InputOwner, Owner, TakesInput};
 use crate::pace::{Act, Game, Sim, TurnSet};
 use crate::toast;
 use crate::ui::{
     self, Focusable, MenuSelection, PointerReach, UiActivated, UiMetrics, UiPlugin, UiTheme,
 };
+use crate::vision::{self, Vision};
 
 /// What a row does.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -163,10 +163,12 @@ fn on_click(open: Option<Cell>, cell: Option<Cell>, primary: bool, free: bool) -
     }
 }
 
-/// Toggles the tile cursor, moves it a cell per press, opens its cell's menu.
+/// Toggles the tile cursor, moves it a lit cell per press, opens its cell's menu.
+/// It turns on at the player's cell, which is always lit.
 fn steer<G: Game>(
     mut toggles: MessageReader<ToggleTileCursor>,
     (keys, bindings, sim): (Res<ButtonInput<KeyCode>>, Res<Bindings>, Res<Sim<G>>),
+    vision: Option<Res<Vision>>,
     menus: Query<(), With<TileMenu<G::Intent, G::Condition>>>,
     mut cursors: Query<(Entity, &mut TileCursor)>,
     mut open: MessageWriter<OpenTileMenu>,
@@ -192,7 +194,8 @@ fn steer<G: Game>(
     }
     let pressed = bindings.steps.iter().find(|(k, _)| keys.just_pressed(*k));
     let next = pressed.map(|&(_, dir)| cursor.0.step(dir));
-    if let Some(next) = next.filter(|&c| sim.world().grid().get(c).is_some()) {
+    let reach = |c: Cell| sim.world().grid().get(c).is_some() && vision::seen(vision.as_deref(), c);
+    if let Some(next) = next.filter(|&c| reach(c)) {
         cursor.0 = next;
     }
     if keys.any_just_pressed([KeyCode::Enter, KeyCode::Space]) {
@@ -207,8 +210,7 @@ fn click<G: Game>(
         Res<ButtonInput<MouseButton>>,
         InputOwner<Without<TileCursor>>,
     ),
-    (bindings, cursor, sim): (Res<Bindings>, Res<Cursor>, Res<Sim<G>>),
-    camera: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    (bindings, pointer): (Res<Bindings>, Pointer<G>),
     menus: Query<&TileMenu<G::Intent, G::Condition>>,
     reach: PointerReach,
     tile_cursors: Query<Entity, With<TileCursor>>,
@@ -224,7 +226,7 @@ fn click<G: Game>(
     if reach.on_ui() {
         return;
     }
-    let cell = pointed(&cursor, &camera, bindings.cell_px, sim.world().grid());
+    let cell = pointer.cell();
     // Free: play has the input, or only the tile cursor holds it.
     let free = owner.get() == Owner::Gameplay;
     let at = menus.single().ok().map(|m| m.at);
@@ -570,6 +572,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cursor::Cursor;
     use crate::intent::Travel;
     use crate::outline::{FLASH, Flash};
     use crate::pace::tests::Walls;
@@ -1235,6 +1238,18 @@ mod tests {
         );
     }
 
+    /// Travel reads the pointer as hover does: a click off the grid sends nothing.
+    #[test]
+    fn in_travel_mode_a_click_off_the_grid_sends_nothing() {
+        let mut app = app();
+        camera(&mut app);
+        app.insert_resource(ClickMode::Travel);
+        click_cell(&mut app, -1, 3);
+        let msgs = app.world().resource::<Messages<TravelTo>>();
+        assert_eq!(msgs.get_cursor().read(msgs).count(), 0);
+        assert_eq!(*app.world().resource::<Travel>(), Travel(None));
+    }
+
     /// Two toggles in one frame cancel: the cursor stays off.
     #[test]
     fn two_toggles_in_one_frame_cancel() {
@@ -1281,5 +1296,74 @@ mod tests {
         app.update();
         let n = node(&mut app);
         assert_eq!((n.left, n.min_width), (px(42.0), px(50.0)));
+    }
+
+    /// Walls' world with the Tile Menu, a camera, and light out to `radius` from (0,0).
+    fn lit(radius: u8) -> App {
+        let mut app = crate::pace::tests::app();
+        app.add_plugins((
+            TileMenuPlugin::<Walls>::default(),
+            crate::vision::VisionPlugin::<Walls>::new(radius),
+        ));
+        camera(&mut app);
+        app.update();
+        app
+    }
+
+    /// A dark cell counts as off the grid: no hover, no menu, and under an open
+    /// menu a click there only closes it. The dev switch lights it again.
+    #[test]
+    fn a_dark_cell_answers_neither_hover_nor_click() {
+        let mut app = lit(1);
+        point_at(&mut app, 1, 1);
+        assert_eq!(line(&app, "outline"), "hover=(1,1) target=none");
+        point_at(&mut app, 2, 1);
+        assert_eq!(line(&app, "outline"), "hover=none target=none");
+        click_cell(&mut app, 2, 1);
+        assert!(line(&app, "tile_menu").starts_with("open=false "));
+        click_cell(&mut app, 1, 0);
+        assert!(line(&app, "tile_menu").starts_with("open=true at=(1,0) "));
+        click_cell(&mut app, 2, 1);
+        assert!(line(&app, "tile_menu").starts_with("open=false "), "closes");
+        assert_eq!(sim(&app), (Cell::new(0, 0), 0), "and runs nothing");
+        app.world_mut().resource_mut::<Vision>().all = true;
+        click_cell(&mut app, 2, 1);
+        assert!(line(&app, "tile_menu").starts_with("open=true at=(2,1) "));
+    }
+
+    #[test]
+    fn a_travel_click_reaches_only_a_lit_cell() {
+        let mut app = lit(2);
+        app.insert_resource(ClickMode::Travel);
+        click_cell(&mut app, 0, 3);
+        assert_eq!(*app.world().resource::<Travel>(), Travel(None), "dark");
+        click_cell(&mut app, 0, 2);
+        let travel = app.world().resource::<Travel>();
+        assert_eq!(*travel, Travel(Some(Cell::new(0, 2))));
+    }
+
+    #[test]
+    fn the_tile_cursor_stops_at_the_lights_edge() {
+        let mut app = lit(1);
+        app.world_mut().write_message(ToggleTileCursor);
+        app.update();
+        for key in [KeyCode::KeyD, KeyCode::KeyD, KeyCode::KeyW, KeyCode::KeyW] {
+            tap(&mut app, key);
+        }
+        assert!(line(&app, "tile_menu").contains(" cursor=(1,1) "));
+    }
+
+    /// Hover reads the light of the Step that lands this frame, never last frame's.
+    #[test]
+    fn hover_sees_this_frames_light() {
+        let mut app = lit(1);
+        point_at(&mut app, 2, 0);
+        assert_eq!(line(&app, "outline"), "hover=none target=none");
+        let by = app.world().resource::<Sim<Walls>>().player();
+        let intent = Intent::Step(aeolus::Dir::East);
+        app.world_mut().write_message(Act::<()> { by, intent });
+        app.update();
+        assert_eq!(sim(&app), (Cell::new(1, 0), 1));
+        assert_eq!(line(&app, "outline"), "hover=(2,0) target=none");
     }
 }

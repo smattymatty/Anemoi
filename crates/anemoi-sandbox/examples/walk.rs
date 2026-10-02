@@ -1,7 +1,7 @@
 //! The smallest game the runner drives: one Unit on open ground, no art, and a
 //! wall line at x=6, with a shut gate at (6,4), that cuts off the last column.
 //! A click Travels; `1` hands clicks to the Tile Menu and back; `L` toggles the
-//! tile cursor.
+//! tile cursor; `V` turns the darkness (radius 4) on, as everything starts lit.
 //!   cargo run -p anemoi-sandbox --example walk -- scripts/walk.toml
 
 use aeolus::{Cell, Cost, Gate, Grid, Kind, Rules, Unit, UnitId, World};
@@ -10,6 +10,7 @@ use boreas::intent::{ClickMode, IntentPlugin};
 use boreas::outline::OutlinePlugin;
 use boreas::pace::Sim;
 use boreas::tile_menu::{Labels, Refusal, Row, TileMenuPlugin, ToggleTileCursor};
+use boreas::vision::{Vision, VisionPlugin};
 
 struct Ground;
 
@@ -66,10 +67,10 @@ impl Labels for Ground {
     }
 }
 
-/// `1`: clicks open the Tile Menu, or Travel again. `L`: the tile cursor.
+/// `1`: clicks open the Tile Menu, or Travel again. `L`: the tile cursor. `V`: the dev light.
 fn keys(
     keys: Res<ButtonInput<KeyCode>>,
-    mut clicks: ResMut<ClickMode>,
+    (mut clicks, mut vision): (ResMut<ClickMode>, ResMut<Vision>),
     mut toggle: MessageWriter<ToggleTileCursor>,
 ) {
     if keys.just_pressed(KeyCode::Digit1) {
@@ -80,6 +81,9 @@ fn keys(
     }
     if keys.just_pressed(KeyCode::KeyL) {
         toggle.write(ToggleTileCursor);
+    }
+    if keys.just_pressed(KeyCode::KeyV) {
+        vision.all = !vision.all;
     }
 }
 
@@ -99,6 +103,8 @@ impl Plugin for Walk {
             OutlinePlugin::<Ground>::default(),
             // Click-to-Travel by default, so `pointer.toml` keeps its meaning.
             TileMenuPlugin::<Ground>::new(ClickMode::Travel),
+            // All lit, so the older scripts and goldens keep their frames.
+            VisionPlugin::<Ground>::new(4).all(true),
         ))
         .insert_resource(Sim::new(world, player))
         .add_systems(Startup, |mut c: Commands| {

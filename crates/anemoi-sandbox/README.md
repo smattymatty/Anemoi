@@ -33,7 +33,7 @@ budget_ms = { startup = 8000, max_frame = 300 }  # optional wall-clock ceilings
 
 [[at]]
 frame = 5
-press = ["W"]          # W A S D L Up Down Left Right Space Enter Escape 0 1 2 3
+press = ["W"]          # W A S D L V Up Down Left Right Space Enter Escape 0 1 2 3
 release = []
 cursor_at = [2, 3]     # pointer onto a cell through the camera; it rests there
 mouse_press = false
@@ -62,7 +62,12 @@ and a shut gate at (6,4) whose Condition the walker lacks:
 `scripts/hover.toml` aims at cells on and off the grid and shoots the outline;
 `scripts/golden/` holds the approved frames: the hover outline, the open Tile Menu
 with its focused row lit, the open menu with the pointer on another cell (no
-second outline: the map is locked), and a refused toast;
+second outline: the map is locked), a refused toast, and the lit walker;
 `scripts/tile_menu.toml` (`1` hands clicks to the Tile Menu) opens, runs, Looks and
 closes it, and takes refused rows past the wall ("no route") and at the gate
 ("locked"): a toast, no Turn; `scripts/tile_cursor.toml` drives the tile cursor (`L`).
+The example starts all lit (vision's dev switch), so those frames show no darkness;
+`scripts/vision.toml` presses `V` and shoots the radius-4 light falling off from
+(4,2), the wall line lit from its near side and the column behind it dark.
+`scripts/dark_cells.toml` shows dark cells answer nothing: a Travel click past the
+light, a Tile Menu click behind the wall, and the tile cursor held at the light's edge.

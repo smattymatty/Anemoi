@@ -4,6 +4,7 @@
 use std::marker::PhantomData;
 
 use aeolus::Cell;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use crate::cursor::Cursor;
@@ -13,9 +14,10 @@ use crate::pace::{Game, Sim};
 use crate::tile_menu::Refused;
 use crate::tween::MAX_DT;
 use crate::ui::{PointerReach, UiTheme};
+use crate::vision::{self, Vision};
 
-/// The grid cell under the pointer, or `None` off the grid, off the window, or
-/// while a `ui::Modal` menu locks the map ([`PointerReach::locked`]).
+/// The grid cell under the pointer, or `None` off the grid, off the window, in
+/// the dark, or while a `ui::Modal` menu locks the map ([`PointerReach::locked`]).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Hover(pub Option<Cell>);
 
@@ -46,7 +48,7 @@ struct Edge(usize);
 pub struct OutlineSystems;
 
 /// Above floor and Units, below the UI.
-const Z: f32 = 50.0;
+pub(crate) const Z: f32 = 50.0;
 
 impl Outline {
     /// Thickness in screen pixels, so a zoomed camera never thickens it.
@@ -93,16 +95,8 @@ pub fn on_grid(p: Vec2, px: f32, width: i32, height: i32) -> Option<Cell> {
     inside.then_some(cell)
 }
 
-fn hover<G: Game>(
-    cursor: Res<Cursor>,
-    bindings: Res<Bindings>,
-    sim: Res<Sim<G>>,
-    camera: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
-    reach: PointerReach,
-    mut hover: ResMut<Hover>,
-) {
-    let cell =
-        pointed(&cursor, &camera, bindings.cell_px, sim.world().grid()).filter(|_| !reach.locked());
+fn hover<G: Game>(pointer: Pointer<G>, reach: PointerReach, mut hover: ResMut<Hover>) {
+    let cell = pointer.cell().filter(|_| !reach.locked());
     hover.set_if_neq(Hover(cell));
 }
 
@@ -116,6 +110,26 @@ pub fn pointed<T>(
     let (cam, at) = camera.single().ok()?;
     let p = cam.viewport_to_world_2d(at, cursor.0?).ok()?;
     on_grid(p, px, grid.width(), grid.height())
+}
+
+/// The pointer as `G`'s cell, for everything a click or hover reaches: on the
+/// grid and, with a `Vision`, lit. A dark cell counts as off the grid.
+#[derive(SystemParam)]
+pub struct Pointer<'w, 's, G: Game> {
+    cursor: Res<'w, Cursor>,
+    bindings: Res<'w, Bindings>,
+    sim: Res<'w, Sim<G>>,
+    vision: Option<Res<'w, Vision>>,
+    camera: Query<'w, 's, (&'static Camera, &'static GlobalTransform), With<Camera2d>>,
+}
+
+impl<G: Game> Pointer<'_, '_, G> {
+    /// The lit grid cell under the pointer, or `None`.
+    pub fn cell(&self) -> Option<Cell> {
+        let grid = self.sim.world().grid();
+        pointed(&self.cursor, &self.camera, self.bindings.cell_px, grid)
+            .filter(|&c| vision::seen(self.vision.as_deref(), c))
+    }
 }
 
 fn spawn(mut commands: Commands) {

@@ -35,6 +35,8 @@ pub struct UiTheme {
     pub target: Color,
     /// A refused Offer's flash.
     pub refused: Color,
+    /// The darkness over unlit cells; opaque here, `vision` sets each cell's alpha.
+    pub dark: Color,
 }
 
 /// A theme as palette indices; the veil and the hover outline also take an opacity.
@@ -54,6 +56,7 @@ pub struct ThemeIndices {
     pub hover_alpha: u8,
     pub target: u8,
     pub refused: u8,
+    pub dark: u8,
 }
 
 /// A theme index past the palette's end.
@@ -78,6 +81,7 @@ impl UiTheme {
                 .ok_or(OutOfPalette(ix.hover))?,
             target: at(ix.target)?,
             refused: at(ix.refused)?,
+            dark: at(ix.dark)?,
         })
     }
 }
@@ -96,6 +100,7 @@ impl Default for UiTheme {
             hover: Color::srgba_u8(255, 255, 255, 80),
             target: Color::srgb_u8(220, 184, 88),
             refused: Color::srgb_u8(200, 48, 48),
+            dark: Color::srgb_u8(0, 0, 0),
         }
     }
 }
@@ -586,6 +591,7 @@ pub(super) mod tests {
         hover_alpha: 80,
         target: 4,
         refused: 3,
+        dark: 7,
     };
 
     fn test_palette() -> Palette {
@@ -607,6 +613,7 @@ pub(super) mod tests {
         assert_eq!(theme.hover, Color::srgba_u8(255, 255, 255, 80));
         assert_eq!(theme.target, rgb(40, 40, 200));
         assert_eq!(theme.refused, rgb(200, 40, 40));
+        assert_eq!(theme.dark, rgb(10, 20, 30));
     }
 
     #[test]
@@ -634,8 +641,13 @@ pub(super) mod tests {
                 refused: 11,
                 ..INDICES
             },
+            ThemeIndices {
+                dark: 12,
+                ..INDICES
+            },
         ] {
-            let bad = [ix.veil, ix.hover, ix.target, ix.refused].into_iter().max();
+            let bad = [ix.veil, ix.hover, ix.target, ix.refused, ix.dark];
+            let bad = bad.into_iter().max();
             assert_eq!(
                 UiTheme::from_palette(&test_palette(), ix),
                 Err(OutOfPalette(bad.unwrap()))

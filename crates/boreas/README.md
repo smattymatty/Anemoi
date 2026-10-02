@@ -54,6 +54,19 @@ Put your world in a `pace::Sim::new(world, player)` resource and add
   `tile_menu::Labels` for row labels and refusal text. Dump `tile_menu`:
   `open= at= rows=A,B focus=N refused=N cursor=(x,y)|none looks=N`; dump
   `refusal`: `toast="<text>"|none refusals=N`.
+- `vision`: `VisionPlugin::<MyRules>::new(radius)` works out `aeolus::light` every
+  frame, after the Turn plays, from the `Eye` resource's cell if the game sets one
+  (say, where the Player is drawn mid-slide), else the player Unit's. `Vision`
+  holds it (`level`, `lit`, `alpha`); without the plugin every cell is seen. One
+  dark sprite per grid cell, in the theme's `dark` at alpha
+  `(radius + 1 - level) * 255 / (radius + 1)`, sits at `DARK_Z` (40): above terrain
+  and Units, below the outlines; draw your Player above it. `Vision::all` is the
+  dev switch that lights everything (`.all(true)` starts with it on); bind it
+  behind your own dev feature. Dump `vision`: `eye=(x,y)|none radius=N lit=K all=bool`.
+  Only lit cells answer: hover, map clicks (Tile Menu and Travel) and the tile
+  cursor treat a dark cell as off the grid. Read the pointer through the
+  `outline::Pointer<G>` param (`cell()`: on the grid and lit); `outline::pointed`
+  stays raw geometry. An `OpenTileMenu` or `TravelTo` the game sends is never gated.
 - `tween`: presentation-only `Transform` tweens, with an optional second leg.
 - `inspect`: `app.inspect(name, dump)` declares a read-only state line;
   `inspect::snapshot` reads them all. `anemoi-sandbox` reads only these.
@@ -103,6 +116,7 @@ Colours come from your game's Aeolus `Palette`. `boreas::palette` converts an
 `Rgb8` or a palette index to a Bevy `Color`. Build a theme once with
 `UiTheme::from_palette(&palette, ThemeIndices { .. })` and insert it as a resource
 (`hover` takes `hover_alpha`, a palette white at low alpha suits it; `target` is
-usually the accent; `refused` flashes a refused Offer);
+usually the accent; `refused` flashes a refused Offer; `dark` is the darkness,
+opaque, as `vision` sets each cell's alpha);
 the default theme is neutral grey. The game supplies its own action mapping,
 screen state, and placement.

@@ -7,8 +7,9 @@ use std::marker::PhantomData;
 use aeolus::{Cell, Dir, Intent, next_step};
 use bevy::prelude::*;
 
-use crate::cursor::{Cursor, CursorPlugin};
+use crate::cursor::CursorPlugin;
 use crate::inspect::InspectApp;
+use crate::outline::Pointer;
 use crate::owner::{self, InputBase, InputOwner, Owner};
 use crate::pace::{Act, Cadence, Game, Lock, PacePlugin, Play, Sim, TurnSet};
 
@@ -231,23 +232,19 @@ fn end_run<G: Game>(
     }
 }
 
-/// A click on the map, as a cell. UI buttons keep their clicks.
-fn click_cell(
+/// A click on the map, as a lit grid cell. UI buttons keep their clicks.
+fn click_cell<G: Game>(
     mouse: Res<ButtonInput<MouseButton>>,
     bindings: Res<Bindings>,
-    cursor: Res<Cursor>,
-    camera: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    pointer: Pointer<G>,
     ui: Query<&Interaction, With<Button>>,
     mut out: MessageWriter<TravelTo>,
 ) {
     if !mouse.just_pressed(bindings.travel) || ui.iter().any(|i| *i == Interaction::Pressed) {
         return;
     }
-    let (Some(cursor), Ok((cam, at))) = (cursor.0, camera.single()) else {
-        return;
-    };
-    if let Ok(p) = cam.viewport_to_world_2d(at, cursor) {
-        out.write(TravelTo(cell_at(p, bindings.cell_px)));
+    if let Some(cell) = pointer.cell() {
+        out.write(TravelTo(cell));
     }
 }
 
@@ -297,10 +294,11 @@ impl<G: Game> Plugin for IntentPlugin<G> {
             .add_systems(
                 Update,
                 (
-                    click_cell.run_if(resource_equals(ClickMode::Travel)),
-                    read_input::<G>.run_if(resource_exists::<Sim<G>>),
+                    click_cell::<G>.run_if(resource_equals(ClickMode::Travel)),
+                    read_input::<G>,
                 )
                     .chain()
+                    .run_if(resource_exists::<Sim<G>>)
                     .in_set(TurnSet::Input),
             )
             .add_observer(end_run::<G>)

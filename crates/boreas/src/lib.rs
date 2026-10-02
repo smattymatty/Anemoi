@@ -9,3 +9,4 @@ pub mod tile_menu;
 pub mod toast;
 pub mod tween;
 pub mod ui;
+pub mod vision;

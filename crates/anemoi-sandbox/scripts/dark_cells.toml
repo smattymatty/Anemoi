@@ -1,0 +1,95 @@
+# Dark cells answer nothing: with `V` the darkness is on, and the pointer and the
+# tile cursor reach only lit cells. (0,5) lies past the light's reach from (0,0);
+# (7,2) sits behind the wall line, in its shadow.
+frames = 50
+budget_ms = { startup = 30000, max_frame = 300 }  # loose, as in walk.toml
+
+[[at]]
+frame = 3
+press = ["V"]
+
+[[at]]
+frame = 4
+release = ["V"]
+expect = { vision = "all=false" }
+
+[[at]]
+frame = 5
+cursor_at = [0, 5]
+mouse_press = true
+note = "a Travel click on a dark cell, though a route leads there, goes nowhere"
+expect = { intent = "clicks=travel travel=none", outline = "hover=none", sim = "turn=0" }
+
+[[at]]
+frame = 6
+mouse_release = true
+
+[[at]]
+frame = 8
+click_tile = [4, 2]
+
+[[at]]
+frame = 32
+press = ["1"]
+expect = { sim = "player=(4,2)", vision = "eye=(4,2) all=false" }
+
+[[at]]
+frame = 33
+release = ["1"]
+expect = { intent = "clicks=menu" }
+
+[[at]]
+frame = 35
+cursor_at = [5, 2]
+note = "a lit cell is hovered"
+expect = { outline = "hover=(5,2)" }
+
+[[at]]
+frame = 36
+cursor_at = [7, 2]
+mouse_press = true
+note = "behind the wall: no hover, no menu"
+expect = { tile_menu = "open=false", outline = "hover=none target=none" }
+
+[[at]]
+frame = 37
+mouse_release = true
+
+[[at]]
+frame = 39
+press = ["L"]
+expect = { tile_menu = "cursor=(4,2)" }
+
+[[at]]
+frame = 40
+release = ["L"]
+
+[[at]]
+frame = 41
+press = ["D"]
+expect = { tile_menu = "cursor=(5,2)" }
+
+[[at]]
+frame = 42
+release = ["D"]
+
+[[at]]
+frame = 43
+press = ["D"]
+note = "the wall is lit from this side"
+expect = { tile_menu = "cursor=(6,2)" }
+
+[[at]]
+frame = 44
+release = ["D"]
+
+[[at]]
+frame = 45
+press = ["D"]
+note = "the light's edge holds it"
+expect = { tile_menu = "cursor=(6,2)", outline = "target=(6,2)", sim = "player=(4,2)" }
+
+[[at]]
+frame = 46
+release = ["D"]
+shot = true

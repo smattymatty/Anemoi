@@ -1,0 +1,39 @@
+# The darkness: `V` turns off the dev light. Radius 4 falls off from the walker,
+# the wall line at x=6 is lit from its near side, and the column behind it stays dark.
+frames = 40
+budget_ms = { startup = 30000, max_frame = 300 }  # loose, as in walk.toml
+
+[[at]]
+frame = 2
+note = "the walk example starts all lit"
+expect = { vision = "eye=(0,0) radius=4 lit=25 all=true" }
+
+[[at]]
+frame = 3
+press = ["V"]
+
+[[at]]
+frame = 4
+release = ["V"]
+note = "the 5x5 corner in reach of (0,0)"
+expect = { vision = "eye=(0,0) radius=4 lit=25 all=false" }
+
+[[at]]
+frame = 10
+click_tile = [4, 2]
+
+[[at]]
+frame = 30
+shot = true
+golden = "golden/vision_lit.png"
+note = "42 open cells and 7 of the wall line; x=7 and the row at y=7 dark"
+expect = { sim = "player=(4,2) turn=6", vision = "eye=(4,2) radius=4 lit=49 all=false" }
+
+[[at]]
+frame = 33
+press = ["V"]
+
+[[at]]
+frame = 34
+release = ["V"]
+expect = { vision = "eye=(4,2) lit=49 all=true" }
