@@ -39,7 +39,9 @@ Put your world in a `pace::Sim::new(world, player)` resource and add
   `aeolus::offers` then Look; distant, Travel then Look, or row 0 refused (a shut
   gate's missing Conditions win over "no route", `Refusal::Gate | NoRoute`), or
   Look only on a wall or a solid Unit. A second travel-button click on the cell runs
-  row 0; a click elsewhere or Escape closes it. Rows run as an `Act`, a `TravelTo`
+  row 0; any other click, either button, or Escape closes it and does nothing else.
+  While open it locks the map: no hover outline, and the pointer reaches only its
+  rows (the panel is `ui::Modal`). Rows run as an `Act`, a `TravelTo`
   or a `Looked` message (no Intent, no Turn). A refused row runs nothing but send
   `Refused { by, cell, refusal, reason }`: `outline` flashes the target `refused`
   and `toast` floats the reason over the cell as a rising, fading `Text2d` (one at
@@ -60,21 +62,33 @@ Put your world in a `pace::Sim::new(world, player)` resource and add
 
 Add `UiPlugin` once. Build menus from
 `ui::overlay`, `panel`, `text`, `button`, and `corner_button` using a `UiTheme`;
-`row` and `refused_row` are 18 px rows for a menu beside a cell.
+`row` and `refused_row` are 20 px rows for a `menu_panel` beside a cell.
 Attach `MenuSelection { selected: 0, count }` to the direct parent of a group of
 numbered `Focusable` buttons. Add `owner::TakesInput` to a menu the keys should
 drive; an unmarked one (an always-visible button) answers only the pointer.
-With several marked, the most recently marked takes the keys.
+With several marked, the most recently marked takes the keys. While a `Modal` menu
+is open, the pointer reaches only its rows: no other widget lights or activates, and
+`outline` shows no hover. `ui::PointerReach` is that one lock; pointer systems ask it.
 Keyboard focus supports Up/Down, W/S, and Tab, and the wheel moves it too;
 Enter/Space activates. Pointer hover selects and pointer
-press activates. `StyledButton` gets visible focus, hover, and pressed colors.
+press activates. Every widget wears one look, a classic context menu's, set by
+its `Look` (every `StyledButton` brings one): bare until lit (focused, or hovered or pressed while the pointer leads),
+then an `active` fill with a 1 px `accent` edge and `accent` letters; a refused row
+keeps `muted` letters. `corner_button` rests with a 1 px `button` edge so it stays
+findable; `panel` has the same subtle 1 px `button` frame. Buttons keep their own
+sizes (48 px tall). `UiTheme.pressed` is unused and goes in the next breaking release.
+Every size (rows, gaps, insets, borders, text) is a `UiMetrics` field, apart from
+colours; insert your own to rescale, and every widget refits when it changes.
 
 Read `UiActivated` messages in your game and map each entity to a game action.
 Boreas never knows game-specific labels or actions. Add `UiSounds` with your
 `focus` and `activate` audio handles to get the same feedback from keyboard and
 pointer input. It is optional; the UI works silently without it. The `ui` dump
 shows `marked=N focus=N count=N` for the most recently marked menu (or
-`focus=none`), `lead=Keys|Pointer`, and the `UiFeedbackStats` sound counts.
+`focus=none`), `lead=Keys|Pointer`, the `UiFeedbackStats` sound counts, `modal=N`
+open modal menus (the map is locked while it is above 0), and that
+menu's lit widget by the roles it was drawn in, `lit=N fill=active edge=accent
+ink=accent` (or `lit=none`), read from its `Drawn`, never mapped back from colours.
 
 ```rust
 app.add_plugins(boreas::ui::UiPlugin);

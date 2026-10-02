@@ -14,11 +14,13 @@ use bevy::prelude::*;
 use crate::cursor::Cursor;
 use crate::inspect::InspectApp;
 use crate::intent::{Bindings, ClickMode, IntentPlugin, TravelTo};
-use crate::outline::{self, OutlinePlugin, Target, pointed};
+use crate::outline::{self, OutlinePlugin, OutlineSystems, Target, pointed};
 use crate::owner::{InputOwner, Owner, TakesInput};
 use crate::pace::{Act, Game, Sim, TurnSet};
 use crate::toast;
-use crate::ui::{self, Focusable, MenuSelection, UiActivated, UiPlugin, UiTheme};
+use crate::ui::{
+    self, Focusable, MenuSelection, PointerReach, UiActivated, UiMetrics, UiPlugin, UiTheme,
+};
 
 /// What a row does.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -151,11 +153,10 @@ enum Click {
 }
 
 /// Any button opens on a grid cell; the travel button on the open cell runs row
-/// 0; a click anywhere else closes it and is used up.
+/// 0; any other click closes it and is used up.
 fn on_click(open: Option<Cell>, cell: Option<Cell>, primary: bool, free: bool) -> Click {
     match (open, cell) {
         (Some(at), Some(c)) if at == c && primary => Click::First,
-        (Some(at), Some(c)) if at == c => Click::Nothing,
         (Some(_), _) => Click::Close,
         (None, Some(c)) if free => Click::Open(c),
         (None, _) => Click::Nothing,
@@ -199,8 +200,8 @@ fn steer<G: Game>(
     }
 }
 
-/// Map clicks, while this plugin has them (`ClickMode::TileMenu`). A click on any
-/// button or on the menu is the UI's.
+/// Map clicks, while this plugin has them (`ClickMode::TileMenu`). A click where
+/// the pointer reaches the UI ([`PointerReach::on_ui`]) is the UI's.
 fn click<G: Game>(
     (mouse, owner): (
         Res<ButtonInput<MouseButton>>,
@@ -209,7 +210,7 @@ fn click<G: Game>(
     (bindings, cursor, sim): (Res<Bindings>, Res<Cursor>, Res<Sim<G>>),
     camera: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     menus: Query<&TileMenu<G::Intent, G::Condition>>,
-    over: Query<&Interaction, Or<(With<Button>, With<TileMenu<G::Intent, G::Condition>>)>>,
+    reach: PointerReach,
     tile_cursors: Query<Entity, With<TileCursor>>,
     (mut choose, mut open, mut commands): (
         MessageWriter<Choose>,
@@ -220,7 +221,7 @@ fn click<G: Game>(
     let Some(&button) = mouse.get_just_pressed().next() else {
         return;
     };
-    if over.iter().any(|i| *i != Interaction::None) {
+    if reach.on_ui() {
         return;
     }
     let cell = pointed(&cursor, &camera, bindings.cell_px, sim.world().grid());
@@ -384,24 +385,8 @@ fn panel(labels: &[String], reasons: &[Option<String>], theme: &UiTheme) -> impl
         .collect();
     let t = *theme;
     (
-        Node {
-            position_type: PositionType::Absolute,
-            flex_direction: FlexDirection::Column,
-            row_gap: px(4),
-            padding: UiRect::all(px(2)),
-            min_width: px(72),
-            border: UiRect::all(px(1)),
-            ..default()
-        },
-        BackgroundColor(theme.panel),
-        BorderColor::all(theme.button),
-        Interaction::None,
+        ui::menu_panel(rows.len(), theme),
         GlobalZIndex(10),
-        MenuSelection {
-            selected: 0,
-            count: rows.len(),
-        },
-        TakesInput,
         Children::spawn(SpawnWith(move |p: &mut RelatedSpawner<ChildOf>| {
             for (i, (label, reason)) in rows.into_iter().enumerate() {
                 match reason {
@@ -432,14 +417,12 @@ fn aim<G: Game>(
     target.set_if_neq(Target(cell));
 }
 
-const GAP: f32 = 4.0;
-
-/// The panel's top-left: right of the cell, else left of it, clamped inside the view.
-fn beside(cell: Rect, size: Vec2, view: Vec2) -> Vec2 {
-    let x = if cell.max.x + GAP + size.x <= view.x {
-        cell.max.x + GAP
+/// The panel's top-left: `gap` right of the cell, else left of it, clamped inside the view.
+fn beside(cell: Rect, size: Vec2, view: Vec2, gap: f32) -> Vec2 {
+    let x = if cell.max.x + gap + size.x <= view.x {
+        cell.max.x + gap
     } else {
-        cell.min.x - GAP - size.x
+        cell.min.x - gap - size.x
     };
     let room = (view - size).max(Vec2::ZERO);
     Vec2::new(x, cell.min.y).clamp(Vec2::ZERO, room)
@@ -447,6 +430,7 @@ fn beside(cell: Rect, size: Vec2, view: Vec2) -> Vec2 {
 
 fn place<G: Game>(
     bindings: Res<Bindings>,
+    metrics: Res<UiMetrics>,
     camera: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     mut panels: Query<(&TileMenu<G::Intent, G::Condition>, &ComputedNode, &mut Node)>,
 ) {
@@ -468,7 +452,8 @@ fn place<G: Game>(
         let origin = cam.logical_viewport_rect().map_or(Vec2::ZERO, |r| r.min);
         let (top_left, bottom_right) = (top_left - origin, bottom_right - origin);
         let size = computed.size() * computed.inverse_scale_factor();
-        let at = beside(Rect::from_corners(top_left, bottom_right), size, view);
+        let cell = Rect::from_corners(top_left, bottom_right);
+        let at = beside(cell, size, view, metrics.menu_cell_gap);
         if (node.left, node.top) != (px(at.x), px(at.y)) {
             (node.left, node.top) = (px(at.x), px(at.y));
         }
@@ -573,7 +558,8 @@ where
                     .chain()
                     .run_if(resource_exists::<Sim<G>>)
                     .after(ui::navigate_and_activate)
-                    .before(TurnSet::Input),
+                    .before(TurnSet::Input)
+                    .before(OutlineSystems),
             )
             .add_systems(Update, toast::rise)
             .inspect("tile_menu", dump::<G>)
@@ -708,7 +694,7 @@ mod tests {
         assert_eq!(on_click(None, a, true, false), Click::Nothing, "not play's");
         assert_eq!(on_click(None, None, true, true), Click::Nothing, "off grid");
         assert_eq!(on_click(a, a, true, true), Click::First);
-        assert_eq!(on_click(a, a, false, true), Click::Nothing, "right on it");
+        assert_eq!(on_click(a, a, false, true), Click::Close, "right on it");
         assert_eq!(on_click(a, b, true, true), Click::Close);
         assert_eq!(on_click(a, None, false, true), Click::Close, "off grid");
     }
@@ -718,6 +704,7 @@ mod tests {
         let view = Vec2::new(100.0, 50.0);
         let cell = |x, y| Rect::new(x, y, x + 10.0, y + 10.0);
         let size = Vec2::new(30.0, 20.0);
+        let beside = |cell, size, view| beside(cell, size, view, 4.0);
         assert_eq!(beside(cell(10.0, 5.0), size, view), Vec2::new(24.0, 5.0));
         assert_eq!(
             beside(cell(80.0, 5.0), size, view),
@@ -863,6 +850,9 @@ mod tests {
         app.update();
         assert_eq!(sim(&app), (Cell::new(0, 1), 1));
         assert!(line(&app, "tile_menu").starts_with("open=false "));
+        let msgs = app.world().resource::<Messages<Choose>>();
+        let chosen: Vec<Choose> = msgs.get_cursor().read(msgs).copied().collect();
+        assert_eq!(chosen, [Choose::Run(0)], "the row's, never also a close");
     }
 
     /// A Travel row: the menu closes before input reads the `TravelTo`, so it walks at once.
@@ -1119,18 +1109,94 @@ mod tests {
         );
     }
 
-    /// §4.4: Right opens, but only the travel button's second click runs row 0.
+    /// §4.4: Right opens, but only the travel button's second click runs row 0;
+    /// a second Right, even on the open cell, closes it and runs nothing.
     #[test]
-    fn a_second_right_click_on_the_open_cell_runs_nothing() {
+    fn a_second_right_click_on_the_open_cell_closes_it() {
         let mut app = app();
         camera(&mut app);
         press_cell(&mut app, 1, 0, MouseButton::Right);
         assert!(line(&app, "tile_menu").starts_with("open=true at=(1,0) "));
         press_cell(&mut app, 1, 0, MouseButton::Right);
-        assert!(line(&app, "tile_menu").starts_with("open=true at=(1,0) "));
+        assert!(line(&app, "tile_menu").starts_with("open=false "));
         assert_eq!(sim(&app), (Cell::new(0, 0), 0), "no Step");
+        press_cell(&mut app, 1, 0, MouseButton::Right);
         click_cell(&mut app, 1, 0);
         assert_eq!(sim(&app), (Cell::new(1, 0), 1), "Left runs row 0");
+    }
+
+    /// The pointer on cell (x, y) through the camera, no click.
+    fn point_at(app: &mut App, x: i32, y: i32) {
+        let at = Vec2::new(x as f32 * 16.0 + 8.0, 80.0 - (y as f32 * 16.0 + 8.0));
+        app.insert_resource(Cursor(Some(at)));
+        app.update();
+    }
+
+    /// An open menu locks the map: no hover on another cell, and a click there,
+    /// either button, only closes it; then the hover comes back.
+    #[test]
+    fn an_open_menu_locks_the_map() {
+        let mut app = app();
+        camera(&mut app);
+        point_at(&mut app, 3, 3);
+        assert_eq!(line(&app, "outline"), "hover=(3,3) target=none");
+        click_cell(&mut app, 1, 0);
+        point_at(&mut app, 3, 3);
+        assert_eq!(line(&app, "outline"), "hover=none target=(1,0)");
+        press_cell(&mut app, 3, 3, MouseButton::Right);
+        assert!(
+            line(&app, "tile_menu").starts_with("open=false "),
+            "no new menu"
+        );
+        assert_eq!(line(&app, "outline"), "hover=(3,3) target=none");
+        click_cell(&mut app, 1, 0);
+        click_cell(&mut app, 3, 3);
+        assert!(line(&app, "tile_menu").starts_with("open=false "));
+        assert_eq!(sim(&app), (Cell::new(0, 0), 0), "no Step, no Travel");
+        assert_eq!(*app.world().resource::<Travel>(), Travel(None));
+    }
+
+    /// The lock holds from the frame the menu opens: no stale hover beside it.
+    #[test]
+    fn the_map_locks_the_frame_the_menu_opens() {
+        let mut app = app();
+        camera(&mut app);
+        point_at(&mut app, 3, 3);
+        open(&mut app, 1, 0);
+        assert_eq!(line(&app, "outline"), "hover=none target=(1,0)");
+    }
+
+    /// Under the open menu another button is map: pressing it closes the menu and
+    /// activates nothing. With the menu shut, the same press is the button's.
+    #[test]
+    fn a_press_on_another_button_only_closes_the_menu() {
+        let mut app = app();
+        camera(&mut app);
+        let theme = UiTheme::default();
+        let corner = app.world_mut().spawn(ui::corner_button("X", &theme)).id();
+        click_cell(&mut app, 1, 0);
+        app.insert_resource(ui::UiLead::Pointer);
+        app.world_mut()
+            .entity_mut(corner)
+            .insert(Interaction::Pressed);
+        click_cell(&mut app, 3, 3);
+        assert!(line(&app, "tile_menu").starts_with("open=false "));
+        let activated = |app: &App| {
+            let msgs = app.world().resource::<Messages<UiActivated>>();
+            msgs.get_cursor().read(msgs).count()
+        };
+        assert_eq!(activated(&app), 0, "the button stays shut");
+        app.world_mut().entity_mut(corner).insert(Interaction::None);
+        app.update();
+        app.world_mut()
+            .entity_mut(corner)
+            .insert(Interaction::Pressed);
+        click_cell(&mut app, 3, 3);
+        assert_eq!(activated(&app), 1, "menu shut: the button's");
+        assert!(
+            line(&app, "tile_menu").starts_with("open=false "),
+            "no menu"
+        );
     }
 
     /// A press over the open panel (between rows, or on its border) is the UI's:
@@ -1191,16 +1257,29 @@ mod tests {
         assert_eq!(line(&app, "outline"), "hover=none target=(2,2)");
     }
 
-    /// The panel's node is placed beside its cell through the camera.
+    /// The panel's node is placed beside its cell through the camera, sized and
+    /// spaced by the game's `UiMetrics`.
     #[test]
     fn the_open_panel_is_placed_beside_its_cell() {
         let mut app = app();
         camera(&mut app);
         open(&mut app, 1, 0);
         app.update();
-        let w = app.world_mut();
-        let mut q = w.query_filtered::<&Node, With<TileMenu<(), ()>>>();
-        let node = q.single(w).unwrap();
-        assert_eq!((node.left, node.top), (px(36.0), px(64.0)));
+        let node = |app: &mut App| {
+            let w = app.world_mut();
+            let mut q = w.query_filtered::<&Node, With<TileMenu<(), ()>>>();
+            q.single(w).unwrap().clone()
+        };
+        let n = node(&mut app);
+        assert_eq!((n.left, n.top, n.min_width), (px(36.0), px(64.0), px(72.0)));
+        let own = UiMetrics {
+            menu_cell_gap: 10.0,
+            menu_min_width: 50.0,
+            ..default()
+        };
+        app.insert_resource(own);
+        app.update();
+        let n = node(&mut app);
+        assert_eq!((n.left, n.min_width), (px(42.0), px(50.0)));
     }
 }

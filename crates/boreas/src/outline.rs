@@ -12,9 +12,10 @@ use crate::intent::{Bindings, cell_at};
 use crate::pace::{Game, Sim};
 use crate::tile_menu::Refused;
 use crate::tween::MAX_DT;
-use crate::ui::UiTheme;
+use crate::ui::{PointerReach, UiTheme};
 
-/// The grid cell under the pointer, or `None` off the grid or the window.
+/// The grid cell under the pointer, or `None` off the grid, off the window, or
+/// while a `ui::Modal` menu locks the map ([`PointerReach::locked`]).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Hover(pub Option<Cell>);
 
@@ -39,6 +40,10 @@ pub enum Outline {
 /// One side of an outline; its index orders top, bottom, left, right.
 #[derive(Component)]
 struct Edge(usize);
+
+/// The outline systems; whoever moves `Target` or opens a `ui::Modal` menu runs before.
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct OutlineSystems;
 
 /// Above floor and Units, below the UI.
 const Z: f32 = 50.0;
@@ -93,9 +98,11 @@ fn hover<G: Game>(
     bindings: Res<Bindings>,
     sim: Res<Sim<G>>,
     camera: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    reach: PointerReach,
     mut hover: ResMut<Hover>,
 ) {
-    let cell = pointed(&cursor, &camera, bindings.cell_px, sim.world().grid());
+    let cell =
+        pointed(&cursor, &camera, bindings.cell_px, sim.world().grid()).filter(|_| !reach.locked());
     hover.set_if_neq(Hover(cell));
 }
 
@@ -219,7 +226,9 @@ impl<G: Game> Plugin for OutlinePlugin<G> {
             .add_systems(Startup, spawn)
             .add_systems(
                 Update,
-                (hover::<G>.run_if(resource_exists::<Sim<G>>), fade, place).chain(),
+                (hover::<G>.run_if(resource_exists::<Sim<G>>), fade, place)
+                    .chain()
+                    .in_set(OutlineSystems),
             )
             .inspect("outline", dump);
     }

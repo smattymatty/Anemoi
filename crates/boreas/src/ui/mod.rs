@@ -5,9 +5,16 @@ use crate::palette;
 use aeolus::palette::Palette;
 use bevy::audio::Volume;
 use bevy::ecs::change_detection::Tick;
-use bevy::ecs::system::SystemChangeTick;
+use bevy::ecs::system::{SystemChangeTick, SystemParam};
 use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::prelude::*;
+
+mod look;
+mod metrics;
+
+pub use look::{Drawn, Look, Role};
+use metrics::Fit;
+pub use metrics::UiMetrics;
 
 /// Resolved menu colours. `Default` is a neutral grey; games build theirs with
 /// [`UiTheme::from_palette`].
@@ -16,6 +23,7 @@ pub struct UiTheme {
     pub panel: Color,
     pub button: Color,
     pub active: Color,
+    /// Unused: a pressed widget draws as lit. Goes in the next breaking release.
     pub pressed: Color,
     pub foreground: Color,
     pub muted: Color,
@@ -35,6 +43,7 @@ pub struct ThemeIndices {
     pub panel: u8,
     pub button: u8,
     pub active: u8,
+    /// Unused, as [`UiTheme::pressed`].
     pub pressed: u8,
     pub foreground: u8,
     pub muted: u8,
@@ -156,8 +165,42 @@ pub struct MenuSelection {
 #[derive(Component)]
 pub struct Focusable(pub usize);
 
-#[derive(Component)]
+/// A navigable widget; it always wears a [`Look`], so it is always drawn.
+#[derive(Component, Default)]
+#[require(Look, Interaction)]
 pub struct StyledButton;
+
+/// Marks a menu that, while open, is all the pointer reaches: no other widget
+/// lights or activates under it, and the map shows no hover. The Tile Menu is one.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct Modal;
+
+/// The one lock on the pointer: while a [`Modal`] menu is open, it reaches only
+/// that menu and its rows. Every pointer system asks this, never `Modal` itself.
+#[derive(SystemParam)]
+pub struct PointerReach<'w, 's> {
+    modal: Query<'w, 's, (), With<Modal>>,
+    nodes: Query<'w, 's, (Entity, &'static Interaction, Option<&'static ChildOf>)>,
+}
+
+impl PointerReach<'_, '_> {
+    /// A modal menu is open: the map takes no hover and no click.
+    pub fn locked(&self) -> bool {
+        !self.modal.is_empty()
+    }
+
+    /// Whether the pointer reaches a widget with this parent.
+    pub fn reaches(&self, parent: Option<&ChildOf>) -> bool {
+        !self.locked() || parent.is_some_and(|p| self.modal.contains(p.parent()))
+    }
+
+    /// The pointer is over a node it reaches: a click there is the UI's, not the map's.
+    pub fn on_ui(&self) -> bool {
+        let busy = |i: &Interaction| *i != Interaction::None;
+        let reached = |e, parent| self.modal.contains(e) || self.reaches(parent);
+        self.nodes.iter().any(|(e, i, p)| busy(i) && reached(e, p))
+    }
+}
 
 #[derive(Message)]
 pub struct UiActivated {
@@ -179,20 +222,39 @@ pub fn overlay(theme: &UiTheme) -> impl Bundle {
     )
 }
 
+/// Every panel's fill and subtle 1 px frame.
+fn frame(theme: &UiTheme) -> (BackgroundColor, BorderColor) {
+    (BackgroundColor(theme.panel), BorderColor::all(theme.button))
+}
+
 pub fn panel(theme: &UiTheme, width: f32) -> impl Bundle {
     (
         Node {
             width: px(width),
-            max_width: percent(92),
             flex_direction: FlexDirection::Column,
-            row_gap: px(12),
-            padding: UiRect::all(px(20)),
-            border: UiRect::all(px(3)),
             ..default()
         },
-        BackgroundColor(theme.panel),
-        BorderColor::all(theme.accent),
+        Fit::Panel,
+        frame(theme),
         Visibility::default(),
+    )
+}
+
+/// A compact [`Modal`] menu of `count` rows that takes the keys and floats beside
+/// what it serves. The caller adds its rows ([`row`], [`refused_row`]) and places it.
+pub fn menu_panel(count: usize, theme: &UiTheme) -> impl Bundle {
+    (
+        Node {
+            position_type: PositionType::Absolute,
+            flex_direction: FlexDirection::Column,
+            ..default()
+        },
+        Fit::Menu,
+        frame(theme),
+        Interaction::None,
+        Modal,
+        MenuSelection { selected: 0, count },
+        TakesInput,
     )
 }
 
@@ -204,23 +266,26 @@ pub fn text(label: impl Into<String>, size: f32, color: Color) -> impl Bundle {
     )
 }
 
+/// A widget's text, sized by [`fit`].
+fn label(label: impl Into<String>, color: Color) -> impl Bundle {
+    (Text::new(label), TextFont::default(), TextColor(color))
+}
+
 pub fn button(label: impl Into<String>, index: usize, theme: &UiTheme) -> impl Bundle {
     (
         Button,
         StyledButton,
         Focusable(index),
+        Fit::Button,
         Node {
             width: percent(100),
-            height: px(48),
             align_items: AlignItems::Center,
-            padding: UiRect::axes(px(16), px(8)),
-            border: UiRect::all(px(2)),
             ..default()
         },
-        BackgroundColor(theme.button),
-        BorderColor::all(theme.muted),
+        BackgroundColor(Color::NONE),
+        BorderColor::all(Color::NONE),
         Visibility::default(),
-        children![text(label, 22.0, theme.foreground)],
+        children![self::label(label, theme.foreground)],
     )
 }
 
@@ -228,7 +293,7 @@ pub fn button(label: impl Into<String>, index: usize, theme: &UiTheme) -> impl B
 pub fn row(label: impl Into<String>, index: usize, theme: &UiTheme) -> impl Bundle {
     (
         compact(index, false),
-        children![text(label, ROW_TEXT, theme.foreground)],
+        children![self::label(label, theme.foreground)],
     )
 }
 
@@ -242,33 +307,21 @@ pub fn refused_row(
     (
         compact(index, true),
         children![
-            text(label, ROW_TEXT, theme.muted),
-            text(reason, ROW_TEXT, theme.muted)
+            self::label(label, theme.muted),
+            self::label(reason, theme.muted)
         ],
     )
-}
-
-const ROW_TEXT: f32 = 13.0;
-
-/// A compact row: bare until focused, then filled `active`, edged and lettered `accent`
-/// (a classic context menu). A refused row keeps its muted letters.
-#[derive(Component, Clone, Copy, Debug)]
-pub struct CompactRow {
-    pub refused: bool,
 }
 
 fn compact(index: usize, refused: bool) -> impl Bundle {
     (
         Button,
         StyledButton,
-        CompactRow { refused },
+        Look { refused },
         Focusable(index),
+        Fit::Row,
         Node {
-            height: px(20),
             align_items: AlignItems::Center,
-            column_gap: px(8),
-            padding: UiRect::axes(px(8), px(1)),
-            border: UiRect::all(px(1)),
             ..default()
         },
         BackgroundColor(Color::NONE),
@@ -282,18 +335,15 @@ pub fn corner_button(label: impl Into<String>, theme: &UiTheme) -> impl Bundle {
         Button,
         StyledButton,
         Focusable(0),
+        Fit::Corner,
         Node {
             position_type: PositionType::Absolute,
-            top: px(20),
-            right: px(20),
-            padding: UiRect::axes(px(18), px(11)),
-            border: UiRect::all(px(2)),
             ..default()
         },
-        BackgroundColor(theme.button),
-        BorderColor::all(theme.muted),
+        BackgroundColor(Color::NONE),
+        BorderColor::all(theme.button),
         Visibility::default(),
-        children![text(label, 18.0, theme.foreground)],
+        children![self::label(label, theme.foreground)],
     )
 }
 
@@ -306,10 +356,13 @@ pub fn navigate_and_activate(
     ticks: SystemChangeTick,
     mut menus: Query<(Entity, &mut MenuSelection, Option<Ref<TakesInput>>)>,
     buttons: Query<(Entity, Ref<Interaction>, &Focusable, Option<&ChildOf>), With<StyledButton>>,
-    mut activated: MessageWriter<UiActivated>,
-    mut focused: MessageWriter<UiFocused>,
+    reach: PointerReach,
+    (mut activated, mut focused): (MessageWriter<UiActivated>, MessageWriter<UiFocused>),
 ) {
     for (entity, interaction, focusable, parent) in &buttons {
+        if !reach.reaches(parent) {
+            continue;
+        }
         if interaction.is_changed() && *interaction == Interaction::Pressed {
             activated.write(UiActivated { entity });
         }
@@ -364,78 +417,6 @@ pub fn navigate_and_activate(
     }
 }
 
-fn style_buttons(
-    theme: Res<UiTheme>,
-    lead: Res<UiLead>,
-    menus: Query<&MenuSelection>,
-    mut buttons: Query<
-        (
-            &Focusable,
-            &Interaction,
-            Option<&ChildOf>,
-            &mut BackgroundColor,
-            &mut BorderColor,
-        ),
-        (With<StyledButton>, Without<CompactRow>),
-    >,
-) {
-    for (index, interaction, parent, mut background, mut border) in &mut buttons {
-        let focused = parent
-            .and_then(|p| menus.get(p.parent()).ok())
-            .is_some_and(|menu| menu.selected == index.0);
-        let hovered = *lead == UiLead::Pointer && *interaction == Interaction::Hovered;
-        let active = focused || hovered;
-        let fill = if *interaction == Interaction::Pressed {
-            theme.pressed
-        } else if active {
-            theme.active
-        } else {
-            theme.button
-        };
-        *background = BackgroundColor(fill);
-        *border = BorderColor::all(if active || *interaction == Interaction::Pressed {
-            theme.accent
-        } else {
-            theme.muted
-        });
-    }
-}
-
-fn style_rows(
-    theme: Res<UiTheme>,
-    lead: Res<UiLead>,
-    menus: Query<&MenuSelection>,
-    mut rows: Query<(
-        &Focusable,
-        &Interaction,
-        &CompactRow,
-        Option<&ChildOf>,
-        &Children,
-        &mut BackgroundColor,
-        &mut BorderColor,
-    )>,
-    mut letters: Query<&mut TextColor>,
-) {
-    for (index, interaction, row, parent, children, mut fill, mut edge) in &mut rows {
-        let focused = parent
-            .and_then(|p| menus.get(p.parent()).ok())
-            .is_some_and(|menu| menu.selected == index.0);
-        let lit = focused || (*lead == UiLead::Pointer && *interaction != Interaction::None);
-        *fill = BackgroundColor(if lit { theme.active } else { Color::NONE });
-        *edge = BorderColor::all(if lit { theme.accent } else { Color::NONE });
-        let ink = match (row.refused, lit) {
-            (true, _) => theme.muted,
-            (false, true) => theme.accent,
-            (false, false) => theme.foreground,
-        };
-        for child in children.iter() {
-            if let Ok(mut c) = letters.get_mut(child) {
-                c.0 = ink;
-            }
-        }
-    }
-}
-
 fn play_feedback(
     mut commands: Commands,
     sounds: Option<Res<UiSounds>>,
@@ -462,6 +443,7 @@ pub struct UiPlugin;
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<UiTheme>()
+            .init_resource::<UiMetrics>()
             .init_resource::<UiFeedbackStats>()
             .init_resource::<UiLead>()
             .add_message::<MouseMotion>()
@@ -474,11 +456,14 @@ impl Plugin for UiPlugin {
                 (
                     track_lead,
                     navigate_and_activate,
-                    style_buttons,
-                    style_rows,
+                    look::style,
                     play_feedback,
                 )
                     .chain(),
+            )
+            .add_systems(
+                PostUpdate,
+                metrics::fit.before(bevy::ui::UiSystems::Prepare),
             )
             .inspect("ui", dump);
     }
@@ -495,29 +480,37 @@ fn newest_marked(marks: impl Iterator<Item = (Tick, Entity)>, now: Tick) -> Opti
         .map(|(_, e)| e)
 }
 
-fn shown(w: &World) -> Option<(usize, usize)> {
+fn shown(w: &World) -> Option<(Entity, &MenuSelection)> {
     let mut q = w.try_query::<(Entity, Ref<TakesInput>, &MenuSelection)>()?;
     let rows = q.iter(w).map(|(e, mark, _)| (mark.added(), e));
-    let menu = w.get::<MenuSelection>(newest_marked(rows, w.read_change_tick())?)?;
-    Some((menu.selected, menu.count))
+    let menu = newest_marked(rows, w.read_change_tick())?;
+    Some((menu, w.get::<MenuSelection>(menu)?))
 }
 
 fn dump(w: &World) -> String {
     let marked = crate::inspect::count::<With<TakesInput>>(w);
-    let menu = shown(w).map_or("focus=none".into(), |(f, c)| format!("focus={f} count={c}"));
+    let shown = shown(w);
+    let menu = shown.map_or("focus=none".into(), |(_, m)| {
+        format!("focus={} count={}", m.selected, m.count)
+    });
+    let lit = shown.and_then(|(e, _)| look::lit(w, e));
+    let modal = crate::inspect::count::<With<Modal>>(w);
+    let lit = lit.unwrap_or_else(|| "lit=none".into());
     let lead = w.get_resource::<UiLead>().copied().unwrap_or_default();
     let (focus, activate) = w
         .get_resource::<UiFeedbackStats>()
         .map_or((0, 0), |s| (s.focus, s.activate));
-    format!("marked={marked} {menu} lead={lead:?} focus_sounds={focus} activate_sounds={activate}")
+    format!(
+        "marked={marked} {menu} lead={lead:?} focus_sounds={focus} activate_sounds={activate} modal={modal} {lit}"
+    )
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     /// A two-button menu that takes input; the returned buttons are focus 0 and 1.
-    fn menu() -> (App, Entity, [Entity; 2]) {
+    pub(super) fn menu() -> (App, Entity, [Entity; 2]) {
         let mut app = App::new();
         app.insert_resource(ButtonInput::<KeyCode>::default())
             .insert_resource(ButtonInput::<MouseButton>::default())
@@ -540,13 +533,7 @@ mod tests {
         let button = |app: &mut App, i| {
             let id = app
                 .world_mut()
-                .spawn((
-                    StyledButton,
-                    Focusable(i),
-                    Interaction::None,
-                    BackgroundColor(UiTheme::default().button),
-                    BorderColor::all(UiTheme::default().muted),
-                ))
+                .spawn(button(format!("B{i}"), i, &UiTheme::default()))
                 .id();
             app.world_mut().entity_mut(panel).add_child(id);
             id
@@ -556,7 +543,7 @@ mod tests {
         (app, panel, buttons)
     }
 
-    fn tap(app: &mut App, key: KeyCode) {
+    pub(super) fn tap(app: &mut App, key: KeyCode) {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(key);
@@ -566,7 +553,7 @@ mod tests {
         keys.clear();
     }
 
-    fn nudge_mouse(app: &mut App) {
+    pub(super) fn nudge_mouse(app: &mut App) {
         app.world_mut()
             .write_message(MouseMotion { delta: Vec2::X });
         app.update();
@@ -576,12 +563,12 @@ mod tests {
         app.world().get::<MenuSelection>(panel).unwrap().selected
     }
 
-    fn ui_line(app: &App) -> String {
+    pub(super) fn ui_line(app: &App) -> String {
         let got = crate::inspect::snapshot(app.world());
         got.into_iter().find(|(n, _)| *n == "ui").unwrap().1
     }
 
-    fn fill(app: &App, button: Entity) -> Color {
+    pub(super) fn fill(app: &App, button: Entity) -> Color {
         app.world().get::<BackgroundColor>(button).unwrap().0
     }
 
@@ -602,7 +589,7 @@ mod tests {
     };
 
     fn test_palette() -> Palette {
-        Palette::parse(include_str!("../../aeolus/tests/data/test.gpl")).unwrap()
+        Palette::parse(include_str!("../../../aeolus/tests/data/test.gpl")).unwrap()
     }
 
     #[test]
@@ -666,26 +653,18 @@ mod tests {
             .insert(Interaction::Hovered);
         app.update();
         assert_eq!(selected(&app, panel), 0, "resting hover selects nothing");
-        assert_eq!(
-            fill(&app, second),
-            UiTheme::default().button,
-            "and isn't lit"
-        );
+        assert_eq!(fill(&app, second), Color::NONE, "and isn't lit");
 
         tap(&mut app, KeyCode::KeyS);
         assert_eq!(selected(&app, panel), 1);
         tap(&mut app, KeyCode::KeyW);
         assert_eq!(selected(&app, panel), 0, "W wins over the idle hover");
         assert_eq!(fill(&app, first), UiTheme::default().active);
-        assert_eq!(
-            fill(&app, second),
-            UiTheme::default().button,
-            "one highlight"
-        );
+        assert_eq!(fill(&app, second), Color::NONE, "one highlight");
 
         nudge_mouse(&mut app);
         assert_eq!(selected(&app, panel), 1, "a moving mouse takes over");
-        assert_eq!(fill(&app, first), UiTheme::default().button);
+        assert_eq!(fill(&app, first), Color::NONE);
 
         tap(&mut app, KeyCode::ArrowDown);
         assert_eq!(selected(&app, panel), 0, "a key takes it straight back");
@@ -708,7 +687,11 @@ mod tests {
         app.update();
         let stats = app.world().resource::<UiFeedbackStats>();
         assert_eq!((stats.focus, stats.activate), (1, 1));
-        assert_eq!(fill(&app, button), UiTheme::default().pressed);
+        assert_eq!(
+            fill(&app, button),
+            UiTheme::default().active,
+            "pressed is lit"
+        );
     }
 
     fn scroll(app: &mut App, y: f32) {
@@ -759,11 +742,58 @@ mod tests {
         assert_eq!((stats.focus, stats.activate), (1, 1), "a click activates");
     }
 
+    /// A modal menu open: the pointer neither selects, lights nor activates a widget
+    /// of another menu, only the modal's rows; shut, the other menu answers again.
+    #[test]
+    fn a_modal_menu_is_all_the_pointer_reaches() {
+        let (mut app, panel, [_, outside]) = menu();
+        let theme = UiTheme::default();
+        let modal = (
+            MenuSelection {
+                selected: 1,
+                count: 2,
+            },
+            Modal,
+        );
+        let modal = app.world_mut().spawn(modal).id();
+        let row = app.world_mut().spawn(row("R", 0, &theme)).id();
+        app.world_mut().entity_mut(modal).add_child(row);
+        app.world_mut()
+            .entity_mut(outside)
+            .insert(Interaction::Hovered);
+        nudge_mouse(&mut app);
+        assert_eq!(selected(&app, panel), 0, "hover selects nothing outside");
+        assert_eq!(fill(&app, outside), Color::NONE, "nor lights it");
+        app.world_mut()
+            .entity_mut(outside)
+            .insert(Interaction::Pressed);
+        app.update();
+        let stats = app.world().resource::<UiFeedbackStats>();
+        assert_eq!((stats.focus, stats.activate), (0, 0), "nor activates it");
+        app.world_mut().entity_mut(row).insert(Interaction::Hovered);
+        nudge_mouse(&mut app);
+        assert_eq!(selected(&app, modal), 0, "the modal's row answers");
+        assert_eq!(fill(&app, row), theme.active);
+        assert!(
+            ui_line(&app).contains(" modal=1 "),
+            "the dump shows the lock"
+        );
+        app.world_mut().entity_mut(modal).remove::<Modal>();
+        app.update();
+        assert!(ui_line(&app).contains(" modal=0 "), "and its lifting");
+        app.world_mut()
+            .entity_mut(outside)
+            .insert(Interaction::Hovered);
+        nudge_mouse(&mut app);
+        assert_eq!(selected(&app, panel), 1, "shut: the pointer reaches it");
+    }
+
     #[test]
     fn the_ui_dump_shows_the_marked_menu_lead_and_feedback() {
         let (mut app, _, _) = menu();
         tap(&mut app, KeyCode::KeyS);
-        let want = "marked=1 focus=1 count=2 lead=Keys focus_sounds=1 activate_sounds=0";
+        let want = "marked=1 focus=1 count=2 lead=Keys focus_sounds=1 activate_sounds=0 \
+                    modal=0 lit=1 fill=active edge=accent ink=accent";
         assert_eq!(ui_line(&app), want);
         nudge_mouse(&mut app);
         assert!(ui_line(&app).contains(" lead=Pointer "));
@@ -820,72 +850,6 @@ mod tests {
         assert!(
             ui_line(&app).contains(" count=5 "),
             "a tie: the higher index"
-        );
-    }
-
-    /// A classic context menu: rows are bare until focused; the focused one is filled,
-    /// edged and lettered in the accent; a refused row keeps muted letters.
-    #[test]
-    fn a_compact_row_lights_only_when_focused() {
-        let mut app = App::new();
-        app.insert_resource(ButtonInput::<KeyCode>::default())
-            .insert_resource(ButtonInput::<MouseButton>::default())
-            .add_plugins(UiPlugin);
-        let theme = UiTheme::default();
-        let panel = app
-            .world_mut()
-            .spawn((
-                MenuSelection {
-                    selected: 0,
-                    count: 3,
-                },
-                TakesInput,
-            ))
-            .id();
-        let rows = [
-            app.world_mut().spawn(row("Move", 0, &theme)).id(),
-            app.world_mut().spawn(row("Look", 1, &theme)).id(),
-            app.world_mut()
-                .spawn(refused_row("Open", "shut", 2, &theme))
-                .id(),
-        ];
-        for r in rows {
-            app.world_mut().entity_mut(r).insert(Interaction::None);
-            app.world_mut().entity_mut(panel).add_child(r);
-        }
-        app.update();
-        let look = |app: &App, r: Entity| {
-            let w = app.world();
-            let ink = w
-                .get::<TextColor>(w.get::<Children>(r).unwrap()[0])
-                .unwrap()
-                .0;
-            (
-                w.get::<BackgroundColor>(r).unwrap().0,
-                w.get::<BorderColor>(r).unwrap().top,
-                ink,
-            )
-        };
-        assert_eq!(
-            look(&app, rows[0]),
-            (theme.active, theme.accent, theme.accent)
-        );
-        assert_eq!(
-            look(&app, rows[1]),
-            (Color::NONE, Color::NONE, theme.foreground)
-        );
-        app.world_mut()
-            .get_mut::<MenuSelection>(panel)
-            .unwrap()
-            .selected = 2;
-        app.update();
-        assert_eq!(
-            look(&app, rows[0]),
-            (Color::NONE, Color::NONE, theme.foreground)
-        );
-        assert_eq!(
-            look(&app, rows[2]),
-            (theme.active, theme.accent, theme.muted)
         );
     }
 }
