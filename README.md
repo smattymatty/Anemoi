@@ -1,17 +1,13 @@
 # Anemoi
 
-A Rust engine for turn-based, top-down games: two crates and a test runner.
+Two Rust libraries for turn-based, top-down 2D games in Bevy, roguelikes first.
 
-- **Aeolus** (`crates/aeolus`): the simulation. Pure Rust, no Bevy, deterministic:
-  integers only, its own seeded RNG, ordered maps, no clock. It owns the world as
-  plain data: a grid, Units, gates. Intents go in, Events come out. The same
-  Intents from the same seed give the same Events on every platform, so a turn log
-  replays exactly.
-- **Boreas** (`crates/boreas`): the Bevy front end. Menus, turning keys and mouse
-  into Intents, and pacing the Events Aeolus returns. It never decides a rule.
-- **anemoi-sandbox** (`crates/anemoi-sandbox`): play a Boreas game from a TOML
-  script, headless or windowed, and check its declared state. Its own crate, so
-  UI-only games never compile it.
+- **Aeolus** is the simulation: the grid, the Units, the rules, every Turn. It doesn't need Bevy.
+- **Boreas** connects Aeolus to Bevy and handles the presentation: input, animation, menus.
+
+Because Aeolus doesn't need Bevy, the whole game can be simulated headless, on a server or in CI. **anemoi-sandbox** is the test framework: a TOML file scripts any action, frame by frame, and checks the state the game declares. Today a script starts from the game's startup. With Turn Logs it will start from any recorded Turn.
+
+LDtk maps are planned for Boreas. Today each game loads its own.
 
 Your game supplies its own data on each Unit (`Unit<G>`) and its rules through
 the `Rules` trait: what a cell is, what an opened gate becomes, and how its own Intents play

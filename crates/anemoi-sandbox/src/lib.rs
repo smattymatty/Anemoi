@@ -1,9 +1,8 @@
-//! Play a game from a script, see it, and read its state. A game's runner is
-//! `fn main() { anemoi_sandbox::run::<MyGame>() }`, then
-//! `cargo run --example sandbox -- sandbox/walk.toml [--window]`.
-//! Headless by default: offscreen PNGs at a fixed 60 fps clock, so runs repeat
-//! exactly; `--window` plays the same script on screen to watch. Writes
+//! Play a game from a script, see it, and read its state. A runner is
+//! `fn main() { anemoi_sandbox::run::<MyGame>() }`; `--window` watches the same script.
+//! Headless by default at a fixed 60 fps clock, so runs repeat exactly. Writes
 //! `target/sandbox/<script>/`: `frame_NNNN.png`, `state.log`, `fetches.log`.
+//! TODO: scripts start from the game's startup; with Turn Logs, from any recorded Turn.
 #![cfg(not(target_arch = "wasm32"))]
 
 use std::collections::{BTreeMap, HashMap};
