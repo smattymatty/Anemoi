@@ -47,7 +47,7 @@ const GAME_WORDS: [&str; 25] = [
 ];
 
 /// The neutral terms `CONTEXT.md` must define.
-const VOCABULARY: [&str; 16] = [
+const VOCABULARY: [&str; 18] = [
     "Unit",
     "Intent",
     "Event",
@@ -64,6 +64,8 @@ const VOCABULARY: [&str; 16] = [
     "Tile Menu",
     "Look",
     "Refusal",
+    "Sight",
+    "Light",
 ];
 
 fn root() -> PathBuf {

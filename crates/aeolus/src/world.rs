@@ -101,6 +101,11 @@ pub trait Rules: Sized {
         Bump::Stay
     }
 
+    /// Whether `unit` stops sight through its cell (`line_of_sight`).
+    fn blocks_sight(&self, _unit: &Unit<Self::Ext>) -> bool {
+        false
+    }
+
     /// The game's own Offers for `cell`, after the Step. Asked only for the
     /// Unit's own cell and its neighbours; see `offer::offers`.
     fn offers(_world: &World<Self>, _by: UnitId, _cell: Cell) -> Vec<Self::Intent> {
@@ -317,6 +322,10 @@ pub(crate) mod fixture {
                 }
                 Act::Wait => (Vec::new(), Cost::Turn),
             }
+        }
+
+        fn blocks_sight(&self, unit: &Unit<Vec<u8>>) -> bool {
+            unit.name == "screen"
         }
 
         fn offers(world: &World<Self>, by: UnitId, cell: Cell) -> Vec<Act> {

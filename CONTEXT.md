@@ -68,3 +68,15 @@ Intent, so no replay holds it.
 Why a Unit cannot take an Offer: the missing Conditions of a gate, or no route. A
 refused Offer stays visible with its reason; taking it sends no Intent. Not the
 refused Event, which is a bump the world said no to.
+
+**Sight**:
+Whether one cell is seen from another: no cell between them is blocking terrain,
+a gate, off the grid, or holds a Unit the game says blocks sight
+(`Rules::blocks_sight`). The far cell itself is always seen.
+
+**Light**:
+How brightly each cell is seen from one eye cell, worked out fresh each time and
+never remembered. Within a square radius, an open cell in Sight takes
+`radius + 1` minus its distance; 0 is dark. A blocking or gate cell takes the
+brightest open cell beside it, so a seen wall is lit and light never runs along
+walls (`aeolus::light`).

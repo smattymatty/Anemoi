@@ -22,6 +22,13 @@ give the same Events everywhere.
 - `offers(&world, unit, cell)` lists a cell's Offers as Intents: next to the
   Unit, `Step` first, then `Rules::offers` (the game's own, default none); on its
   own cell, the game's only; distant cells, nothing.
+- `line_of_sight(&world, from, to)` walks Bresenham's line: a cell between
+  blocks if it is off the grid, `Blocking`, a `Gate`, or holds a Unit that
+  `Rules::blocks_sight` (default no). `to` itself is always seen.
+- `light(&world, eye, radius)` gives a `Light`: a `u8` level per cell, worked
+  out fresh each call. Within the Chebyshev `radius`, an open cell in sight takes
+  `radius + 1 - dist`; then a blocking or gate cell in that square takes its
+  brightest open neighbour (no cascade). 0 is dark, off the grid too.
 - `world.state_hash()` folds grid, Units, Turn and RNG into one `u64` through
   `StableHasher` (FNV-1a, fixed-width little-endian), so native and wasm agree.
   `tests/replay.rs` pins it; `tests/fitness.rs` bans floats, hash maps, clocks
@@ -58,6 +65,9 @@ let mut world = World::new(Game, grid, 42);
 let hero = world.spawn(Unit::new("hero", 10, Cell::new(0, 0), ()));
 assert!(matches!(world.apply(hero, Intent::Step(Dir::East))[..], [Event::Moved { .. }]));
 assert!(matches!(world.apply(hero, Intent::Step(Dir::East))[..], [Event::Bumped { .. }]));
+world.spawn(Unit::new("guard", 10, Cell::new(0, 0), ()));
+assert!(aeolus::line_of_sight(&world, Cell::new(0, 0), Cell::new(2, 0)));
+assert_eq!(aeolus::light(&world, Cell::new(0, 0), 4).level(Cell::new(2, 0)), 4);
 assert_eq!(world.turn(), 1);
 ```
 
