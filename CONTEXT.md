@@ -49,3 +49,22 @@ reads it, and a condition may test it.
 **Rules**:
 The trait a game implements: what terrain is, which conditions hold, what an opened
 gate becomes, what bumping a blocking cell does, and how its own Intents play out.
+
+**Offer**:
+One thing a Unit can do to one cell, a row of a Tile Menu: a Step, a Travel, one
+of the game's own Intents, or Look. Next to the Unit the Step comes first, so a
+click does what a direction key does (`aeolus::offers`; `Rules::offers` adds the
+game's own).
+
+**Tile Menu**:
+The Offers for one cell, opened by clicking it or from the tile cursor. Its first
+Offer is what a Step or Travel there does; Look is always last.
+
+**Look**:
+Reading what is on a cell. It costs no Turn, changes nothing and is never an
+Intent, so no replay holds it.
+
+**Refusal**:
+Why a Unit cannot take an Offer: the missing Conditions of a gate, or no route. A
+refused Offer stays visible with its reason; taking it sends no Intent. Not the
+refused Event, which is a bump the world said no to.

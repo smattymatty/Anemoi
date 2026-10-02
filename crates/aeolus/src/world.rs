@@ -101,6 +101,12 @@ pub trait Rules: Sized {
         Bump::Stay
     }
 
+    /// The game's own Offers for `cell`, after the Step. Asked only for the
+    /// Unit's own cell and its neighbours; see `offer::offers`.
+    fn offers(_world: &World<Self>, _by: UnitId, _cell: Cell) -> Vec<Self::Intent> {
+        Vec::new()
+    }
+
     /// May change the world: the one place outside setup that should.
     fn act(world: &mut World<Self>, by: UnitId, intent: Self::Intent) -> (Vec<Self::Event>, Cost);
 
@@ -310,6 +316,13 @@ pub(crate) mod fixture {
                     (vec![key], Cost::Free)
                 }
                 Act::Wait => (Vec::new(), Cost::Turn),
+            }
+        }
+
+        fn offers(world: &World<Self>, by: UnitId, cell: Cell) -> Vec<Act> {
+            match world.unit(by) {
+                Some(u) if u.cell == cell => vec![Act::Wait],
+                _ => vec![Act::Grant(1), Act::Grant(2)],
             }
         }
     }

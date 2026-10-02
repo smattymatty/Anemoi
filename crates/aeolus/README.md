@@ -19,6 +19,9 @@ give the same Events everywhere.
   it, and `missing` names what the closest route still lacks.
 - `next_step(&world, unit, to)` is a deterministic BFS for travel. A blocked
   target next to the Unit is still a target: the step becomes a bump.
+- `offers(&world, unit, cell)` lists a cell's Offers as Intents: next to the
+  Unit, `Step` first, then `Rules::offers` (the game's own, default none); on its
+  own cell, the game's only; distant cells, nothing.
 - `world.state_hash()` folds grid, Units, Turn and RNG into one `u64` through
   `StableHasher` (FNV-1a, fixed-width little-endian), so native and wasm agree.
   `tests/replay.rs` pins it; `tests/fitness.rs` bans floats, hash maps, clocks
