@@ -4,11 +4,13 @@
 //! The game names rows and reasons through [`Labels`].
 
 use std::marker::PhantomData;
+use std::time::Duration;
 
 use aeolus::{Cell, Intent, Kind, UnitId, next_step};
 use bevy::ecs::relationship::RelatedSpawner;
 use bevy::ecs::spawn::SpawnWith;
 use bevy::ecs::system::SystemParam;
+use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
 
 use crate::inspect::InspectApp;
@@ -143,6 +145,37 @@ struct Looks(u32);
 #[derive(Resource, Default)]
 struct Refusals(u32);
 
+/// How long the wheel's pick holds: a click on the menu's own cell within it takes
+/// the focused row, after it row 0 (operator, 2026-10-02).
+pub const SCROLL_HOLD: Duration = Duration::from_millis(1750);
+
+/// When the wheel last moved the open menu's focus; none once it closes.
+#[derive(Resource, Default)]
+struct Scrolled(Option<Duration>);
+
+fn note_scroll<G: Game>(
+    mut wheel: MessageReader<MouseWheel>,
+    time: Res<Time>,
+    menus: Query<(), With<TileMenu<G::Intent, G::Condition>>>,
+    mut scrolled: ResMut<Scrolled>,
+) {
+    let moved = wheel.read().any(|w| w.y != 0.0);
+    if menus.is_empty() {
+        scrolled.0 = None;
+    } else if moved {
+        scrolled.0 = Some(time.elapsed());
+    }
+}
+
+/// The row a click on the menu's own cell runs: the wheel's pick while it holds,
+/// else row 0 (the double-click shortcut).
+fn first_click_row(selected: usize, scrolled: Option<Duration>, now: Duration) -> usize {
+    match scrolled {
+        Some(at) if now.saturating_sub(at) <= SCROLL_HOLD => selected,
+        _ => 0,
+    }
+}
+
 /// What a click does: §4.4's contract, given the open menu's cell.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Click {
@@ -211,8 +244,8 @@ fn click<G: Game>(
         InputOwner<Without<TileCursor>>,
     ),
     (bindings, pointer): (Res<Bindings>, Pointer<G>),
-    menus: Query<&TileMenu<G::Intent, G::Condition>>,
-    reach: PointerReach,
+    menus: Query<(&TileMenu<G::Intent, G::Condition>, &MenuSelection)>,
+    (reach, time, scrolled): (PointerReach, Res<Time>, Res<Scrolled>),
     tile_cursors: Query<Entity, With<TileCursor>>,
     (mut choose, mut open, mut commands): (
         MessageWriter<Choose>,
@@ -229,7 +262,8 @@ fn click<G: Game>(
     let cell = pointer.cell();
     // Free: play has the input, or only the tile cursor holds it.
     let free = owner.get() == Owner::Gameplay;
-    let at = menus.single().ok().map(|m| m.at);
+    let menu = menus.single().ok();
+    let at = menu.map(|(m, _)| m.at);
     match on_click(at, cell, button == bindings.travel, free) {
         Click::Open(c) => {
             tile_cursors
@@ -238,7 +272,12 @@ fn click<G: Game>(
             open.write(OpenTileMenu(c));
         }
         Click::First => {
-            choose.write(Choose::Run(0));
+            let selected = menu.map_or(0, |(_, focus)| focus.selected);
+            choose.write(Choose::Run(first_click_row(
+                selected,
+                scrolled.0,
+                time.elapsed(),
+            )));
         }
         Click::Close => {
             choose.write(Choose::Close);
@@ -536,6 +575,7 @@ where
         }
         app.init_resource::<Looks>()
             .init_resource::<Refusals>()
+            .init_resource::<Scrolled>()
             .insert_resource(self.clicks)
             .add_message::<OpenTileMenu>()
             .add_message::<ToggleTileCursor>()
@@ -546,6 +586,7 @@ where
                 Update,
                 (
                     steer::<G>,
+                    note_scroll::<G>,
                     click::<G>.run_if(resource_equals(ClickMode::TileMenu)),
                     pick::<G>,
                     apply::<G>,
@@ -1130,6 +1171,72 @@ mod tests {
         press_cell(&mut app, 1, 0, MouseButton::Right);
         click_cell(&mut app, 1, 0);
         assert_eq!(sim(&app), (Cell::new(1, 0), 1), "Left runs row 0");
+    }
+
+    /// The wheel's pick holds for `SCROLL_HOLD`, inclusive; then row 0 again.
+    #[test]
+    fn a_click_on_the_open_cell_takes_the_wheels_pick_while_it_holds() {
+        let at = Duration::from_secs(10);
+        assert_eq!(first_click_row(1, None, at), 0, "never scrolled: row 0");
+        assert_eq!(first_click_row(1, Some(at), at + SCROLL_HOLD), 1);
+        let late = at + SCROLL_HOLD + Duration::from_millis(1);
+        assert_eq!(first_click_row(1, Some(at), late), 0);
+    }
+
+    fn wheel_down(app: &mut App) {
+        app.world_mut().write_message(MouseWheel {
+            unit: bevy::input::mouse::MouseScrollUnit::Line,
+            x: 0.0,
+            y: -1.0,
+            window: Entity::PLACEHOLDER,
+            phase: bevy::input::touch::TouchPhase::Moved,
+        });
+        app.update();
+    }
+
+    /// Open on (1,0), wheel down to Look, click the cell again: it Looks, no Step.
+    #[test]
+    fn scrolling_to_look_then_clicking_the_cell_looks() {
+        let mut app = app();
+        camera(&mut app);
+        click_cell(&mut app, 1, 0);
+        wheel_down(&mut app);
+        assert!(line(&app, "tile_menu").contains(" focus=1 "));
+        click_cell(&mut app, 1, 0);
+        assert!(line(&app, "tile_menu").ends_with(" looks=1"), "Look ran");
+        assert!(
+            line(&app, "tile_menu").starts_with("open=false "),
+            "and closed"
+        );
+        assert_eq!(sim(&app), (Cell::new(0, 0), 0), "no Step");
+    }
+
+    /// Past `SCROLL_HOLD`, the same click takes row 0 again.
+    #[test]
+    fn a_lapsed_scroll_clicks_row_0() {
+        let mut app = app();
+        camera(&mut app);
+        click_cell(&mut app, 1, 0);
+        wheel_down(&mut app);
+        let later = SCROLL_HOLD + Duration::from_millis(100);
+        app.world_mut().resource_mut::<Time>().advance_by(later);
+        click_cell(&mut app, 1, 0);
+        assert_eq!(sim(&app), (Cell::new(1, 0), 1), "row 0 Steps");
+    }
+
+    /// A scroll does not outlive its menu: reopened, a key's pick is not the wheel's.
+    #[test]
+    fn a_scroll_ends_with_its_menu() {
+        let mut app = app();
+        camera(&mut app);
+        click_cell(&mut app, 1, 0);
+        wheel_down(&mut app);
+        tap(&mut app, KeyCode::Escape);
+        click_cell(&mut app, 1, 0);
+        tap(&mut app, KeyCode::KeyS);
+        assert!(line(&app, "tile_menu").contains(" focus=1 "));
+        click_cell(&mut app, 1, 0);
+        assert_eq!(sim(&app), (Cell::new(1, 0), 1), "row 0 Steps");
     }
 
     /// The pointer on cell (x, y) through the camera, no click.

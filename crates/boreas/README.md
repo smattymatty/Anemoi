@@ -39,7 +39,8 @@ Put your world in a `pace::Sim::new(world, player)` resource and add
   `aeolus::offers` then Look; distant, Travel then Look, or row 0 refused (a shut
   gate's missing Conditions win over "no route", `Refusal::Gate | NoRoute`), or
   Look only on a wall or a solid Unit. A second travel-button click on the cell runs
-  row 0; any other click, either button, or Escape closes it and does nothing else.
+  row 0, or the wheel's pick within `SCROLL_HOLD` (1.75 s); any other click, either
+  button, or Escape closes it and does nothing else.
   While open it locks the map: no hover outline, and the pointer reaches only its
   rows (the panel is `ui::Modal`). Rows run as an `Act`, a `TravelTo`
   or a `Looked` message (no Intent, no Turn). A refused row runs nothing but send
